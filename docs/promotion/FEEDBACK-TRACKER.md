@@ -3,7 +3,7 @@
 > 目标：**200 份真实用户反馈**。统计口径：一条 = 一个真实的人给出的具体使用意见（Issue / Discussion 回复 / 评论区反馈转述），自问自答、重复水贴不算。
 > 每次推广发帖后更新本表；每凑够 10 条在反馈帖同步一次进度。
 
-**当前进度：0 / 200**（更新于 2026-09-04）
+**当前进度：2 / 200**（更新于 2026-09-20）
 
 ## 检查日志
 | 日期 | 检查结果 | 备注 |
@@ -11,12 +11,13 @@
 | 2026-08-27 | 新外部 Issue 0 条、discussions 回复 0 条、Star 0 | 投稿尚未被周刊/HelloGitHub 收录 |
 | 2026-09-02 | 新外部 Issue 0 条、discussions/13 回复 0 条、Star 0 | 仓库已推进到 v0.12.x（改名 AnyKey AI），推广物料需同步改名；投稿仍未收录 |
 | 2026-09-04 | 新外部 Issue 0 条、discussions/13 回复 0 条、Star 0 | 仓库改名 anykey-ai（旧名 301 跳转），推广物料仍用旧名待同步；投稿仍未收录 |
+| 2026-09-20 | discussions/13 首条真实反馈（kaiwen743，2 条），Star 0→2，Fork 1 | 含 1 个 bug（AI/普通模式行为相反、仅 AI 切换键可改键）待复现；1 条市场信号（键盘国内下架、官方疑似停更）印证 AI 层通用化方向 |
 
 ## 渠道看板
 
 | 渠道 | 链接 | 已发帖 | 带来反馈数 | 备注 |
 |---|---|---|---|---|
-| GitHub Discussions | [discussions/13](https://github.com/xiaoyuyu6420/rk87-aikey/discussions/13) | 反馈征集帖（已发，建议置顶） | 0 | 主渠道，README 已引流 |
+| GitHub Discussions | [discussions/13](https://github.com/xiaoyuyu6420/anykey-ai/discussions/13) | 反馈征集帖（已发，建议置顶） | 2 | 首条反馈 2026-09-19 kaiwen743 |
 | GitHub Issues | — | bug/feedback 模板已上线 | 0 | |
 | 科技爱好者周刊 | [投稿 #11363](https://github.com/ruanyf/weekly/issues/11363) | ✅ 已投稿（2026-08-26） | 0 | 阮一峰每周五从 issue 收录，等入选 |
 | HelloGitHub | [投稿 #3592](https://github.com/521xueweihan/HelloGitHub/issues/3592) | ✅ 已投稿（2026-08-26） | 0 | 月刊，等收录 |
@@ -31,7 +32,8 @@
 
 | # | 日期 | 渠道 | 用户 | 类型 | 摘要 | 状态 |
 |---|---|---|---|---|---|---|
-| — | — | — | — | — | （第一条反馈进来后从这里开始记） | — |
+| 1 | 2026-09-19 | Discussions/13 | kaiwen743 | 市场/定位 | R87 Pro AI 买后 3 个月国内已下架，官方疑似放弃维护，担心项目太受众太窄 | 已知悉——印证「AI 层通用化」方向 |
+| 2 | 2026-09-19 | Discussions/13 | kaiwen743 | Bug | 安装版：AI 模式和普通模式行为相反；键位映射里只有「AI 切换」键能改 | ✅ 已修复——贡献者自提 PR#14，已合并（极性按其实机反转，待其他批次验证；捕获/手输/布局一并修） |
 
 ## 里程碑
 
