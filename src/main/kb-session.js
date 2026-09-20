@@ -406,10 +406,10 @@ class KeySession extends EventEmitter {
       }
       return;
     }
-    // AI 模式切换键上报
+    // AI 模式切换键上报：0=AI 模式 / 1=普通模式（PR#14 kaiwen743 实机，与初版标定相反）
     if (cmd === 209 && len === 1) {
       this.pressed.clear(); // 切换瞬间边沿状态作废：按住中的键不会再有对应抬起码
-      this.emit('ai-mode', { on: payload[0] === 1 });
+      this.emit('ai-mode', { on: payload[0] === 0 });
       return;
     }
     // 按键上报（cmd=159，payload[0]=键码）：蓝牙/2.4G 连接时按键只走此口，需转发

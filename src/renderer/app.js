@@ -118,6 +118,14 @@ async function init() {
 
   window.aikey.onKeyEvent(ev => {
     if (ev.phase !== 'down') return;
+    // RK 键盘 AI/F 区按键走 HID 上报而非 DOM KeyboardEvent：捕获状态下在这里
+    // 吃掉该事件填进捕获框，否则这类键（如 F10）永远捕获不到（PR#14 kaiwen743）
+    const captureBtn = document.querySelector('button.capturing');
+    if (captureBtn && captureBtn._captureInput && ev.keyId) {
+      captureBtn._captureInput.value = String(ev.keyId).toLowerCase();
+      stopCapture(captureBtn);
+      return;
+    }
     const row = document.querySelector(`.key-row[data-id="${ev.keyId}"]`);
     if (!row) return;
     row.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
@@ -517,6 +525,8 @@ function buildRow(key, binding) {
     if (t === 'hotkey') {
       const combo = document.createElement('input');
       combo.type = 'text';
+      combo.readOnly = false; // 允许手动输入：系统保留组合键（如 Win+G）页面收不到，只能手敲
+      combo.addEventListener('keydown', e => e.stopPropagation()); // 输入不被全局键盘处理打断
       combo.placeholder = '点击「捕获」直接按组合键';
       combo.value = binding.combo || '';
       fields.appendChild(combo);
@@ -710,19 +720,23 @@ function ensureCaptureHandler() {
     if (e.ctrlKey) mods.push('Ctrl');
     if (e.altKey) mods.push('Alt');
     if (e.shiftKey) mods.push('Shift');
-    if (e.metaKey) mods.push('Win'); // macOS 上 Win 键 = Cmd
+    // Win 键在部分 Windows 构建上第二键时 metaKey 为 false，用 getModifierState 兜底
+    if (e.metaKey || e.getModifierState?.('Meta') || e.key === 'Meta' ||
+        e.code === 'MetaLeft' || e.code === 'MetaRight') mods.push('Win');
     btn._captureInput.value = mods.length ? mods.join('+') + '+' + name : name;
     stopCapture(btn);
   }, true);
 }
 function stopCapture(btn, restore = false) {
   if (restore && btn._captureInput && btn._origValue !== undefined) btn._captureInput.value = btn._origValue;
+  if (btn._captureInput) btn._captureInput.readOnly = false; // 任何结束路径都不能留下只读输入框
   btn.classList.remove('capturing');
   btn.textContent = '捕获';
 }
 function attachCapture(btn, input) {
   ensureCaptureHandler();
   btn._captureInput = input;
+  input.readOnly = false;
   btn.onclick = () => {
     const on = !btn.classList.contains('capturing');
     document.querySelectorAll('button.capturing').forEach(stopCapture);
@@ -730,6 +744,7 @@ function attachCapture(btn, input) {
       btn._origValue = input.value; // Esc 取消时回填
       btn.classList.add('capturing');
       btn.textContent = '按组合键…(Esc停)';
+      input.readOnly = true; // 组合键已写入捕获框，别让最后一个键的字符再漏进输入框
       input.value = '';
       input.focus();
     }

@@ -266,8 +266,13 @@ select:focus, input:focus {
   box-shadow: 0 0 0 3px rgba(79, 140, 255, .15);
 }
 
-.action-fields { display: flex; gap: 8px; align-items: center; }
+.action-fields { display: flex; gap: 8px; align-items: center; min-width: 0; }
 .action-fields > * { flex: 1; }
+.action-fields input[type=text] { min-width: 0; width: 100%; flex: 1 1 auto; }
+
+@media (min-width: 1100px) {
+  .action-fields input[type=text] { min-width: 180px; }
+}
 .action-fields .fixed { flex: 0 0 auto; }
 .action-fields button {
   flex: 0 0 auto; cursor: pointer;
