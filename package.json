@@ -1,7 +1,7 @@
 {
   "name": "anykey-ai",
   "productName": "AnyKey AI",
-  "version": "0.12.2",
+  "version": "0.12.3",
   "description": "任意键盘的 AI 控制台：功能键区变 AI 快捷键 + RK R87 Pro AI 深度适配（无需官方 RK-AI 软件）",
   "main": "src/main/index.js",
   "author": "xiaoyuyu6420",
