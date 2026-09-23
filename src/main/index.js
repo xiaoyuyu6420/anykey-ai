@@ -811,6 +811,11 @@ function applyStatsCounting() {
   stats.counting = cfg.settings.statsEnabled !== false
     && cfg.settings.remoteStatsPause !== true
     && kbOnline;
+  // 恢复计数时必须把轮询拉起来：set-settings 路径（statsEnabled/soundEnabled 开关）可能
+  // 在 counting=false（键盘离线抖动）期间 stats.stop() 过轮询，此后键盘再上线若无人
+  // start，轮询已死、统计永远为 0（2026-09-16 用户实机中招，应用连续运行未重启）。
+  // start() 幂等：已启动时立即返回
+  if (stats.counting) stats.start();
 }
 
 function rebuildTrayMenu() {
