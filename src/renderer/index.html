@@ -161,6 +161,28 @@
         <p class="qc-hint" id="qc-hint">按住开麦键说话，面板实时显示。说话时<b>波形要有起伏</b>、<b>增益 &gt;1×</b>；纯静音时波形应平、增益回落 1×。</p>
       </div>
 
+      <div class="qc-diag" id="qc-diag">
+        <div class="qc-diag-head">
+          <h3>底噪诊断</h3>
+          <span class="qc-verdict" id="diag-verdict">采样中</span>
+        </div>
+        <div class="qc-diag-grid">
+          <div class="qc-diag-cell">
+            <span class="k">降噪前 <i>（说话时的底噪）</i></span>
+            <span class="v" id="diag-pre">–</span>
+          </div>
+          <div class="qc-diag-cell">
+            <span class="k">降噪后 <i>（送进识别）</i></span>
+            <span class="v" id="diag-post">–</span>
+          </div>
+          <div class="qc-diag-cell hl">
+            <span class="k">降噪量 <i>（压了多少）</i></span>
+            <span class="v" id="diag-cut">–</span>
+          </div>
+        </div>
+        <p class="qc-hint" id="diag-advice">按住开麦键说几句话、再静音几秒，面板会自动采样并给出判读。</p>
+      </div>
+
       <details id="mic-tune-box">
         <summary>识别质量调参（远距说话 / 交叉验证用）</summary>
         <div class="mic-row">
@@ -192,8 +214,24 @@
           <span id="tune-maxgain-v" class="sub">8×</span>
         </div>
         <div class="mic-row">
+          <span class="mic-label"><label><input type="checkbox" id="opt-noise-sub" /> 稳态底噪扣除</label></span>
+          <span class="sub">学习静音期的噪声谱并扣除。专治麦自噪/风扇这类<b>持续存在</b>的底噪——神经网络会刻意保留它们，这一层专门补上。开启后需静音约 1 秒学习。</span>
+        </div>
+        <div class="mic-row">
+          <span class="mic-label">过减强度</span>
+          <input type="range" id="tune-oversub" min="5" max="60" step="1" />
+          <span id="tune-oversub-v" class="sub">2.0×</span>
+        </div>
+        <div class="mic-row">
           <button id="tune-reset" class="ghost-btn">恢复默认</button>
+          <button id="tune-relearn" class="ghost-btn">重学底噪</button>
           <span class="sub">降噪强度越小越保护 s/sh 辅音但底噪残留多；目标响度越高越容易被噪声顶起。改完即时生效，逐项单独试最容易定位。</span>
+        </div>
+        <div class="mic-row">
+          <span class="mic-label">自动调参</span>
+          <button id="autotune-run" class="ghost-btn">开始自动调参</button>
+          <button id="autotune-rollback" class="ghost-btn">回滚</button>
+          <span id="autotune-status" class="sub">逐参数自动搜索最优档位</span>
         </div>
       </details>
     </section>

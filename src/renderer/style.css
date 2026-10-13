@@ -413,6 +413,30 @@ label.pass-line { display: flex; align-items: center; gap: 6px; color: var(--mut
 .qc-hint b { color: var(--text); font-weight: 600; }
 .qc-spark { display: block; width: 100%; height: 34px; margin-top: 5px; }
 
+/* ---------- 底噪诊断（v0.12.5）----------
+   回答「底噪高是降噪没工作，还是麦的物理底噪」——决定要不要继续投软件工。
+   降噪前/后/降噪量三格，降噪量高亮（它直接决定结论）。 */
+.qc-diag {
+  margin-top: 10px; padding: 10px 12px;
+  border: 1px solid var(--line); border-radius: var(--radius);
+  background: rgba(8, 10, 15, .45);
+}
+.qc-diag-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.qc-diag-head h3 { font-size: 12px; font-weight: 600; margin: 0; color: var(--muted); }
+.qc-diag-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.qc-diag-cell {
+  border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px;
+  background: rgba(8, 10, 15, .5);
+}
+.qc-diag-cell.hl { border-color: rgba(79, 140, 255, .35); background: rgba(79, 140, 255, .08); }
+.qc-diag-cell .k { font-size: 10px; color: var(--muted); display: block; margin-bottom: 3px; }
+.qc-diag-cell .k i { font-style: normal; opacity: .7; }
+.qc-diag-cell .v { font-size: 16px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.qc-diag-cell .v small { font-size: 10px; color: var(--muted); font-weight: 400; margin-left: 2px; }
+#diag-verdict.ok { color: var(--ok); border-color: rgba(62, 207, 142, .4); background: rgba(62, 207, 142, .1); }
+#diag-verdict.warn { color: var(--warn); border-color: rgba(255, 178, 36, .4); background: rgba(255, 178, 36, .1); }
+#diag-verdict.err { color: var(--err); border-color: rgba(255, 93, 108, .4); background: rgba(255, 93, 108, .1); }
+
 /* ---------- 按住说话键勾选 ---------- */
 .trigger-keys { display: flex; flex-wrap: wrap; gap: 4px 12px; flex: 1; }
 .trigger-keys .tk {

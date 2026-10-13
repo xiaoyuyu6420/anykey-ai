@@ -230,7 +230,29 @@ class QualityPanel {
     this._spark('spark-noise', this.hist.noise, 0, 400);
 
     this._verdict(d);
+    this._renderDiag(d);
     if (this.view === 'metric') this._draw();
+  }
+
+  // 底噪诊断：把探针的「降噪前/后/量」摆出来，替用户下结论
+  _renderDiag(d) {
+    const p = d.probe;
+    const el = (id) => document.getElementById(id);
+    const vEl = el('diag-verdict'), advEl = el('diag-advice');
+    const preEl = el('diag-pre'), postEl = el('diag-post'), cutEl = el('diag-cut');
+    if (!p || !vEl || !preEl || !postEl || !cutEl || !advEl) return;
+    const s = p.silence;
+    preEl.innerHTML = `${s.pre}<small>RMS</small>`;
+    postEl.innerHTML = `${s.post}<small>RMS</small>`;
+    cutEl.innerHTML = `${s.cutDb}<small>dB</small>`;
+    vEl.textContent = p.verdict;
+    // 颜色按结论分档：正常工作=绿；偏保守/没工作=黄/红
+    vEl.className = 'qc-verdict ' + (
+      p.verdict === '降噪正常工作' ? 'ok'
+        : p.verdict === '降噪偏保守' ? 'warn'
+          : p.verdict === '降噪几乎没工作' ? 'err' : ''
+    );
+    advEl.textContent = p.advice;
   }
 
   _spark(id, arr, min, max) {

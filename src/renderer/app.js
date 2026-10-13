@@ -1114,6 +1114,91 @@ function initTunePanel() {
     await window.aikey.setSettings({ micTune: { ...cur } });
     toast('已恢复默认参数');
   };
+
+  // ---- 稳态底噪扣除（学习式谱减）----
+  const elNoiseSub = document.getElementById('opt-noise-sub');
+  const elOver = document.getElementById('tune-oversub');
+  const elOverV = document.getElementById('tune-oversub-v');
+  const btnRelearn = document.getElementById('tune-relearn');
+  elNoiseSub.checked = !!state.settings.noiseSubtractEnabled;
+  elOver.value = Math.round((state.settings.overSub ?? 2.0) * 10);
+  elOverV.textContent = ((state.settings.overSub ?? 2.0)).toFixed(1) + '×';
+  elNoiseSub.onchange = async () => {
+    await window.aikey.setSettings({ noiseSubtractEnabled: elNoiseSub.checked });
+    toast(elNoiseSub.checked ? '已开启——请静音约 1 秒让它学习底噪' : '已关闭稳态底噪扣除');
+  };
+  elOver.oninput = () => { elOverV.textContent = (elOver.value / 10).toFixed(1) + '×'; };
+  elOver.onchange = async () => {
+    const v = elOver.value / 10;
+    await window.aikey.setSettings({ overSub: v });
+    await window.aikey.noiseProfileSet({ overSub: v });
+  };
+  btnRelearn.onclick = async () => {
+    const r = await window.aikey.noiseRelearn();
+    toast(r ? '已重置，请静音约 1 秒重新学习' : '稳态底噪扣除未启用', !r);
+  };
+
+  // ---- 自动调参（闭环搜索）----
+  const btnAuto = document.getElementById('autotune-run');
+  const btnAutoRb = document.getElementById('autotune-rollback');
+  const autoStatus = document.getElementById('autotune-status');
+  let autoPoll = null;
+  const pollAuto = async () => {
+    try {
+      const p = await window.aikey.autotuneStatus();
+      if (!p) return;
+      const stageText = {
+        idle: '逐参数自动搜索最优档位',
+        baseline: '采基线中…',
+        trial: `测试 ${p.param} 第 ${p.trial}/${p.totalTrials} 档`,
+        done: `完成：分数 ${p.baseline?.score} → ${p.score}`,
+        cancelled: '已取消',
+      };
+      autoStatus.textContent = stageText[p.stage] || p.stage;
+      if (p.stage === 'done' || p.stage === 'cancelled') {
+        if (autoPoll) { clearInterval(autoPoll); autoPoll = null; }
+        btnAuto.textContent = '开始自动调参';
+        if (p.stage === 'done') {
+          toast(`自动调参完成，分数 ${p.baseline?.score} → ${p.score}`);
+          // 参数已改，刷新滑块与状态
+          const fresh = await window.aikey.micDiagnostics();
+          if (fresh && fresh.tune) {
+            cur.attenLimDb = fresh.tune.attenLimDb;
+            cur.gateRelease = fresh.tune.gateRelease;
+            cur.agcTarget = fresh.tune.agcTarget;
+            cur.agcMaxGain = fresh.tune.agcMaxGain;
+            syncInputs();
+            state.settings.micTune = { ...cur };
+          }
+        }
+      }
+    } catch (_) {}
+  };
+  btnAuto.onclick = async () => {
+    if (autoPoll) {
+      await window.aikey.autotuneCancel();
+      clearInterval(autoPoll); autoPoll = null;
+      btnAuto.textContent = '开始自动调参';
+      return;
+    }
+    const r = await window.aikey.autotuneStart({ sampleMs: 4000 });
+    if (!r.ok) { toast(r.error || '启动失败', true); return; }
+    btnAuto.textContent = '停止调参';
+    toast('已开始——请持续说话，让它采到真实语音');
+    autoPoll = setInterval(pollAuto, 500);
+    pollAuto();
+  };
+  btnAutoRb.onclick = async () => {
+    const r = await window.aikey.autotuneRollback();
+    if (r.ok && r.tune) {
+      cur.attenLimDb = r.tune.attenLimDb; cur.gateRelease = r.tune.gateRelease;
+      cur.agcTarget = r.tune.agcTarget; cur.agcMaxGain = r.tune.agcMaxGain;
+      syncInputs();
+      state.settings.micTune = { ...cur };
+      await window.aikey.setSettings({ micTune: { ...cur } });
+      toast('已回滚到调参前的参数');
+    } else toast('无可回滚的记录', true);
+  };
 }
 
 // ---------- 打字音效 ----------

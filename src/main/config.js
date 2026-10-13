@@ -48,6 +48,14 @@ const DEFAULTS = {
       agcMaxGain: 8,
     },
     micDiag: false,          // 链路体检：欠载/SNR/电平实时落盘 app.log（排查用，日常关）
+    // 稳态噪声扣除（v0.12.5）：针对「底噪偏高」——麦自噪/风扇/房间底噪是持续稳态的，
+    // 神经网络会刻意保留（否则远处轻声也被删），故学习噪声谱做谱减。
+    // overSub 过减系数（越大压得越狠，过大削辅音）；floorDb 谱底限。
+    // 默认关闭：先用降噪探针量出基线（DFN3 单独工作时的底噪前后对比），
+    // 确认「软件还能不能救」再决定是否叠加这一层——避免多层处理互相掩盖问题。
+    noiseSubtractEnabled: false,
+    overSub: 2.0,
+    floorDb: -18,
     statsEnabled: true,      // 打字统计（只记每键计数与每日总数，纯本地 stats.json）
     fatigueEnabled: true,    // 疲劳提醒（连续打字满阈值弹系统通知）
     fatigueMinutes: 25,      // 疲劳提醒阈值（分钟）

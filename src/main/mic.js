@@ -12,6 +12,7 @@
 
 const { Denoiser } = require('./denoise');
 const { DeepFilter } = require('./df');
+const { NoiseSubtractor } = require('./noise-profile');
 
 function init(mod) { mod.init(); return mod; }
 
@@ -57,6 +58,13 @@ class Biquad {
 const BLOCK = 160; // 处理块长：10ms @16kHz → ×3 = 480 样本 @48kHz（RNNoise 帧长）
 const FIFO_CAP = 16000; // 1s 上限防积压
 
+// 块 RMS（降噪前后对比探针用）
+function rmsOf(a, n) {
+  let s = 0;
+  for (let i = 0; i < n; i++) s += a[i] * a[i];
+  return Math.sqrt(s / n);
+}
+
 class MicPipeline {
   constructor(opts = {}) {
     this.dec = loadDecoder();
@@ -94,6 +102,18 @@ class MicPipeline {
     this._denoiseRetryAt = 0;     // 引擎坏状态旁路后的冷却重试时刻
     this.snrDb = 0;               // 最近一帧局部 SNR（链路体检上报用）
     this._dspDiag = 0;
+
+    // 稳态噪声扣除（v0.12.5）：学习期只建模不扣除，学习满后按噪声谱扣除。
+    // 削波率统计（调参器的打分项之一）
+    this.clipCount = 0;
+    this.clipRate = 0;
+    // 降噪前后对比探针（默认开：开销是两个 160 点 RMS，可忽略）
+    this._probeOn = true;
+    this._probeSilence = { pre: 0, post: 0, n: 0, m: 0 };
+    this._probeSpeech = { pre: 0, post: 0, n: 0, m: 0 };
+    this.noiseSub = opts.noiseSubtract === false
+      ? null
+      : new NoiseSubtractor({ enabled: true, overSub: opts.overSub, floorDb: opts.floorDb });
 
     // 样本 FIFO（16k 域 float32）
     this.fifo = new Float32Array(FIFO_CAP);
@@ -156,6 +176,40 @@ class MicPipeline {
     }
   }
 
+  // 运行时开关稳态噪声扣除 / 重新学习底噪
+  setNoiseSubtract(on) {
+    const wanted = on !== false;
+    if (!this.noiseSub) {
+      if (!wanted) return false;
+      this.noiseSub = new NoiseSubtractor({ enabled: true, overSub: this.tune.overSub, floorDb: this.tune.floorDb });
+      return true;
+    }
+    this.noiseSub.enabled = wanted;
+    if (!wanted) this.noiseSub.reset();
+    return wanted;
+  }
+
+  // 重新学习底噪：用户换了位置/环境噪声变了时调用
+  relearnNoise() {
+    if (!this.noiseSub) return false;
+    this.noiseSub.reset();
+    return true;
+  }
+
+  // 噪声扣除过减系数/谱底限（调参器可控）
+  setNoiseProfile(patch = {}) {
+    if (!this.noiseSub) return null;
+    if (patch.overSub !== undefined) {
+      const v = Number(patch.overSub);
+      if (Number.isFinite(v)) this.noiseSub.overSub = Math.max(0.5, Math.min(6, v));
+    }
+    if (patch.floorDb !== undefined) {
+      const v = Number(patch.floorDb);
+      if (Number.isFinite(v)) this.noiseSub.floorDb = Math.max(-40, Math.min(0, v));
+    }
+    return this.noiseSub.diagnostics();
+  }
+
   // 运行时调 DSP 参数（设置页改即时生效，无需重启）。
   // attenLimDb 走 df_set_atten_lim，不重建引擎；其余下次 block 即生效。
   setTune(patch = {}) {
@@ -175,7 +229,7 @@ class MicPipeline {
     return this.tune;
   }
 
-  // 链路体检快照：给设置页/日志看的实时指标
+  // 链路体检快照：给设置页/日志/调参器看的实时指标
   diagnostics() {
     return {
       engine: this.engine || 'none',
@@ -187,6 +241,10 @@ class MicPipeline {
       gain: Math.round(this.gain * 100) / 100,
       packets: this.packets,
       fifoLen: this.fifoLen,
+      clipRate: Math.round((this.clipRate || 0) * 10000) / 10000,
+      noiseProfile: this.noiseSub ? this.noiseSub.diagnostics() : null,
+      // 降噪前后对比（核心诊断：回答「底噪高是降噪没工作还是物理底噪」）
+      probe: this._probeOn ? this.probeReport() : null,
       tune: { ...this.tune },
     };
   }
@@ -244,11 +302,76 @@ class MicPipeline {
       this.initDenoiser().then(e => { if (e) console.log('[mic] 降噪引擎重试恢复:', e); }).catch(() => {});
     }
 
+    // ★ 诊断探针（降噪前）：在降噪链入口测 RMS。
+    // 位置刻意选在高通之后、降噪之前、AGC 之前——AGC 会按语音段动态改增益，
+    // 测在 AGC 之后就分不清「降噪压了多少」和「增益抬了多少」。
+    const preDenoiseRms = this._probeOn ? rmsOf(blk, BLOCK) : 0;
+
     // 2) 升采样 ×3 → DFN3/RNNoise 降噪（原地写回）→ 取中点降采样
     if (this.engine) this._denoiseBlock(blk);
 
+    // 2.5) 稳态噪声扣除（v0.12.5）：放在神经网络之后、门控之前。
+    // 顺序有讲究——DFN3/RNNoise 处理完非稳态噪声（键盘声、突发声），
+    // 剩下的是它刻意保留的稳态底噪（麦自噪、风扇、房间底噪），
+    // 这部分正好被噪声谱建模扣除。各司其职，不重复处理。
+    if (this.noiseSub) this.noiseSub.processBlock(blk);
+
+    // ★ 诊断探针（降噪后）：与 preDenoiseRms 同一点位、同一算法，差值即降噪量
+    if (this._probeOn) this._updateProbe(preDenoiseRms, rmsOf(blk, BLOCK));
+
     // 3) VAD 门控 + AGC + 压缩器 + 软限幅（16k 域逐样本状态机，块间无缝）
     return this._gateAgc(blk);
+  }
+
+  // 降噪前后对比的滑动统计。分开累计「语音段」和「静音段」——
+  // 判读关键就在这里：静音段的降噪量反映底噪被压了多少（这是用户要的答案），
+  // 语音段的降噪量反映有没有伤到人声。
+  _updateProbe(pre, post) {
+    // 语音判定与 _gateAgc 保持一致（vad 概率 或 高于底噪倍数），
+    // 否则会出现「探针说语音、门控说静音」的割裂
+    const T = this.tune;
+    const speech = this.engine
+      ? (this.vad > 0.55 || pre > this.noiseFloor * T.gateOpenMul)
+      : (pre > this.noiseFloor * T.gateOpenMul);
+    const acc = speech ? this._probeSpeech : this._probeSilence;
+    if (speech) acc.n++; else acc.m++;
+    // 指数滑动平均：1s 左右窗口
+    const a = 0.02;
+    acc.pre = acc.pre === 0 ? pre : acc.pre * (1 - a) + pre * a;
+    acc.post = acc.post === 0 ? post : acc.post * (1 - a) + post * a;
+  }
+
+  // 探针读数 + 判读结论
+  probeReport() {
+    const s = this._probeSilence, v = this._probeSpeech;
+    // pre/post 是 RMS（幅度量），幅度比转 dB 必须用 20·log10。
+    // 用 10·log10 会把所有降噪量报成实际值的一半（12dB 显示成 6dB）。
+    const db = (pre, post) => (pre > 0 && post > 0 ? Math.round(20 * Math.log10(pre / post) * 10) / 10 : 0);
+    const silPre = Math.round(s.pre), silPost = Math.round(s.post);
+    const spPre = Math.round(v.pre), spPost = Math.round(v.post);
+    // 判读：静音段（底噪）的降噪表现决定「软件还能不能救」
+    let verdict = '采样中', advice = '按住开麦键说几句话，再静音几秒，让面板采满数据。';
+    if (s.m > 20 && s.pre > 0) {
+      const cut = db(s.pre, s.post);
+      if (cut >= 6) {
+        verdict = '降噪正常工作';
+        advice = `底噪已被压低 ${cut}dB（${silPre} → ${silPost}）。残留 ${silPost} 是降噪后的残余，若仍嫌吵可加大降噪强度。`;
+      } else if (cut >= 2) {
+        verdict = '降噪偏保守';
+        advice = `底噪只压低 ${cut}dB（${silPre} → ${silPost}）。attenLim（衰减上限）限制了降噪力度，可上调试试。`;
+      } else {
+        verdict = '降噪几乎没工作';
+        advice = `底噪 ${silPre} → ${silPost}（仅 ${cut}dB）。降噪未生效——要么引擎在旁路，要么 attenLim 太低，属可修问题而非换麦问题。`;
+      }
+      if (spPre > 0 && db(spPre, spPost) > cut + 3) {
+        advice += ` 注意：语音段也被压了 ${db(spPre, spPost)}dB，可能伤到人声，降噪强度别再加了。`;
+      }
+    }
+    return {
+      silence: { pre: silPre, post: silPost, cutDb: db(s.pre, s.post), samples: s.m },
+      speech: { pre: spPre, post: spPost, cutDb: db(v.pre, v.post), samples: v.n },
+      verdict, advice,
+    };
   }
 
   _denoiseBlock(blk) {
@@ -321,6 +444,7 @@ class MicPipeline {
     // 压缩器参数（16k 域）：阈值 -14dBFS≈4000，2.5:1，attack 4ms / release 60ms
     const atk = 1 - Math.exp(-1 / (0.004 * 16000));
     const rel = 1 - Math.exp(-1 / (0.06 * 16000));
+    let clipped = 0;
     for (let i = 0; i < BLOCK; i++) {
       let v = blk[i] * k;
       // 包络压缩：让送进识别引擎的电平平稳（ASR 对动态范围敏感）
@@ -330,8 +454,19 @@ class MicPipeline {
       // 软膝限幅：22k 以上渐进压缩，替代硬 clamp 的爆音失真
       const m = Math.abs(v);
       if (m > 22000) v = Math.sign(v) * (22000 + (m - 22000) / (1 + (m - 22000) / 3000));
+      if (v > 32767 || v < -32768) clipped++;
       blk[i] = v > 32767 ? 32767 : (v < -32768 ? -32768 : v);
     }
+    // 削波率（滑动）：调参器的打分项，也是链路体检指标
+    this.clipCount += clipped;
+    this._clipWin = (this._clipWin || 0) + 1;
+    if (this._clipWin >= 50) {
+      this.clipRate = this.clipCount / (this._clipWin * BLOCK);
+      this.clipCount = 0;
+      this._clipWin = 0;
+    }
+    // 噪声谱学习控制：语音期不学（否则把人声当噪声学进去）
+    if (this.noiseSub) this.noiseSub.setSpeech(speech);
 
     const outRms = Math.sqrt(blk.reduce((s, v) => s + v * v, 0) / BLOCK);
     this.level = this.level * 0.7 + outRms * 0.3;

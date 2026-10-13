@@ -11,6 +11,7 @@ const { KeyboardWatcher } = require('./hid');
 const { KeySession } = require('./kb-session');
 const { lookupKey, allKeys } = require('./keymap');
 const { MicPipeline } = require('./mic');
+const { AutoTuner } = require('./auto-tuner');
 const { TypingStats } = require('./stats');
 const { FgWatcher } = require('./fgwatch');
 const { MacroRecorder, replayMacro, abortReplay, trimSteps, RECORD_MAX_MS } = require('./macro');
@@ -339,8 +340,14 @@ function boot() {
   // 音频管线预热：降噪引擎异步初始化（未就绪期自动旁路，其余 DSP 照常）
   micPipeline = new MicPipeline({
     denoise: cfg.settings.denoiseEnabled !== false,
+    noiseSubtract: cfg.settings.noiseSubtractEnabled !== false,
+    overSub: cfg.settings.overSub,
+    floorDb: cfg.settings.floorDb,
     ...(cfg.settings.micTune || {}),
   });
+  if (micPipeline.noiseSub) {
+    console.log(`[mic] 稳态噪声扣除已启用（overSub=${cfg.settings.overSub} floorDb=${cfg.settings.floorDb}dB）——前 1s 安静时自动学习底噪`);
+  }
   micPipeline.initDenoiser().then(engine => {
     if (engine === 'df') console.log('[mic] DeepFilterNet3 降噪已就绪 attenLim=' + (cfg.settings.micTune || {}).attenLimDb + 'dB');
     else if (engine === 'rnnoise') console.log('[mic] RNNoise 降噪已就绪（DFN3 回退）');
@@ -777,6 +784,28 @@ ipcMain.handle('mic-worklet-url', () =>
 // 设置页「立即体检」：返回当前 DSP 快照，用于调参前后对比
 ipcMain.handle('mic-diagnostics', () => (micPipeline ? micPipeline.diagnostics() : null));
 
+// ---------- 稳态噪声扣除（v0.12.5） ----------
+ipcMain.handle('noise-subtract', (_e, on) => (micPipeline ? micPipeline.setNoiseSubtract(on) : false));
+ipcMain.handle('noise-relearn', () => (micPipeline ? micPipeline.relearnNoise() : false));
+ipcMain.handle('noise-profile-set', (_e, patch) => (micPipeline ? micPipeline.setNoiseProfile(patch || {}) : null));
+
+// ---------- 自动调参器（闭环搜索，v0.12.5） ----------
+let autoTuner = null;
+// 启动：后台跑，渲染端轮询进度。参数改动即时生效，用户可边跑边说话
+ipcMain.handle('autotune-start', async (_e, opts) => {
+  if (!micPipeline) return { ok: false, error: '音频管线未就绪' };
+  if (autoTuner && autoTuner.running) return { ok: false, error: '调参已在运行' };
+  autoTuner = new AutoTuner(micPipeline, opts || {});
+  // 不 await：让渲染端轮询进度，主线程保持响应（用户还能继续说话提供输入）
+  autoTuner.start().then(p => {
+    console.log('[autotune] 完成', JSON.stringify({ stage: p.stage, score: p.score, best: p.best }));
+  }).catch(e => console.log('[autotune] 异常:', e.message));
+  return { ok: true };
+});
+ipcMain.handle('autotune-status', () => (autoTuner ? autoTuner.progress : { stage: 'idle' }));
+ipcMain.handle('autotune-cancel', () => (autoTuner ? (autoTuner.cancel(), { ok: true }) : { ok: false }));
+ipcMain.handle('autotune-rollback', () => (autoTuner ? { ok: true, tune: autoTuner.rollback() } : { ok: false }));
+
 ipcMain.handle('sound-test', () => {
   if (!soundWin || soundWin.isDestroyed()) return { ok: false };
   soundWin.webContents.send('keystroke');
@@ -1008,6 +1037,11 @@ ipcMain.handle('set-settings', (_e, settings) => {
   if ('micTune' in settings && micPipeline && settings.micTune) micPipeline.setTune(settings.micTune);
   // 链路体检开关
   if ('micDiag' in settings) startMicDiag(!!settings.micDiag);
+  // 稳态噪声扣除：开关 + 过减参数
+  if ('noiseSubtractEnabled' in settings && micPipeline) micPipeline.setNoiseSubtract(settings.noiseSubtractEnabled !== false);
+  if (micPipeline && ('overSub' in settings || 'floorDb' in settings)) {
+    micPipeline.setNoiseProfile({ overSub: settings.overSub, floorDb: settings.floorDb });
+  }
   if ('statsEnabled' in settings && stats) {
     applyStatsCounting();
     // 统计关但音效开：轮询保持（keystroke 事件源不能断）；两者都关才停

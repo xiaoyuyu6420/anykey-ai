@@ -23,8 +23,16 @@ contextBridge.exposeInMainWorld('aikey', {
   onAiMode: cb => ipcRenderer.on('ai-mode', (_e, on) => cb(on)),
   onBattery: cb => ipcRenderer.on('battery', (_e, b) => cb(b)),
   micControl: on => ipcRenderer.invoke('mic-control', on),
-  // 麦克风链路体检（DSP 实时快照：SNR/底噪/门控/增益/电平）
+  // 麦克风链路体检（DSP 实时快照：SNR/底噪/门控/增益/电平 + 降噪前后探针）
   micDiagnostics: () => ipcRenderer.invoke('mic-diagnostics'),
+  // 稳态噪声扣除（学习式谱减，专治持续底噪）
+  noiseRelearn: () => ipcRenderer.invoke('noise-relearn'),
+  noiseProfileSet: patch => ipcRenderer.invoke('noise-profile-set', patch),
+  // 自动调参（闭环搜索）
+  autotuneStart: opts => ipcRenderer.invoke('autotune-start', opts),
+  autotuneStatus: () => ipcRenderer.invoke('autotune-status'),
+  autotuneCancel: () => ipcRenderer.invoke('autotune-cancel'),
+  autotuneRollback: () => ipcRenderer.invoke('autotune-rollback'),
   // 打字音效
   soundTest: () => ipcRenderer.invoke('sound-test'),
   pickDir: () => ipcRenderer.invoke('pick-dir'),
