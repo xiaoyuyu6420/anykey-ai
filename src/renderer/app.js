@@ -788,14 +788,17 @@ function bridgeLog(msg, force) {
 }
 let micLevelTimer = null;
 
-// worklet 模块 URL：优先 preload 提供的（主进程转好 file:// URL）。
-// asar 打包后 file:// 指向 app.asar 内可能不可加载，退回相对 import.meta.url，
-// 再退回 window 自身 origin，最后兜底 './mic-bridge-worklet.js'。
-function workletFileUrl() {
+// worklet 模块 URL：主进程经 IPC 转好的 file:// URL（preload 在沙箱里跑，
+// 拿不到 Node 的 path/url 模块，只能由主进程算）。
+// 拿不到时兜底相对路径——打包后 file:// 指向 app.asar 内可能不可加载，
+// applyBridge 里还有一次重试兜底。
+let workletUrlCache = null;
+async function workletFileUrl() {
+  if (workletUrlCache) return workletUrlCache;
   try {
     if (window.aikey && typeof window.aikey.micWorkletUrl === 'function') {
-      const u = window.aikey.micWorkletUrl();
-      if (u) return u;
+      const u = await window.aikey.micWorkletUrl();
+      if (u) { workletUrlCache = u; return u; }
     }
   } catch (_) {}
   return './mic-bridge-worklet.js';
@@ -986,7 +989,7 @@ async function initMicBridge() {
       const sinkLabel = selSink.selectedOptions[0] ? selSink.selectedOptions[0].textContent : bridge.sinkId;
       // addModule 是 Promise——必须 await 完成后再建 node，否则模块尚未注册。
       // 打包后 file:// 指向 app.asar 内可能不可加载，退回相对路径再试一次。
-      let modUrl = workletFileUrl();
+      let modUrl = await workletFileUrl();
       try {
         await bridge.ctx.audioWorklet.addModule(modUrl);
       } catch (e) {

@@ -1,11 +1,11 @@
 const { contextBridge, ipcRenderer } = require('electron');
-const path = require('path');
-const { pathToFileURL } = require('url');
 
 contextBridge.exposeInMainWorld('aikey', {
-  // AudioWorklet 模块的 file:// URL——打包后 app.asar 内直接 addModule 不可靠，
-  // 由主进程侧把路径转 URL 再交给渲染进程
-  micWorkletUrl: () => pathToFileURL(path.join(__dirname, '..', 'renderer', 'mic-bridge-worklet.js')).href,
+  // AudioWorklet 模块的 file:// URL。
+  // 渲染进程 preload 在沙箱里跑，不能 require('path')/'url'（sandbox 下会
+  // module not found: path 导致整个 preload 加载失败、设置页白屏），
+  // 故由主进程算好 file:// URL 再通过 IPC 传过来。
+  micWorkletUrl: () => ipcRenderer.invoke('mic-worklet-url'),
   getState: () => ipcRenderer.invoke('get-state'),
   setBinding: (keyId, action, mode) => ipcRenderer.invoke('set-binding', keyId, action, mode),
   setSettings: s => ipcRenderer.invoke('set-settings', s),

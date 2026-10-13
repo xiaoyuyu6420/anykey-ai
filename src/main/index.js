@@ -4,6 +4,7 @@
 const { app, Tray, Menu, BrowserWindow, ipcMain, nativeImage, shell, powerSaveBlocker, Notification } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const { pathToFileURL } = require('url');
 const { execFile } = require('child_process');
 
 const { KeyboardWatcher } = require('./hid');
@@ -767,6 +768,11 @@ function startMicDiag(on) {
     console.log(`[diag] SNR=${d.snrDb}dB vad=${d.vad} noiseFloor=${d.noiseFloor} level=${d.level} gate=${d.gate} gain=${d.gain} fifo=${d.fifoLen} engine=${d.engine}`);
   }, 1000);
 }
+
+// AudioWorklet 模块的 file:// URL——渲染进程 preload 在沙箱里跑，拿不到
+// Node 的 path/url 模块，必须由主进程算好再经 IPC 传过去
+ipcMain.handle('mic-worklet-url', () =>
+  pathToFileURL(path.join(__dirname, '..', 'renderer', 'mic-bridge-worklet.js')).href);
 
 // 设置页「立即体检」：返回当前 DSP 快照，用于调参前后对比
 ipcMain.handle('mic-diagnostics', () => (micPipeline ? micPipeline.diagnostics() : null));
