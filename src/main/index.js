@@ -336,11 +336,17 @@ function boot() {
   setInterval(pushSessionDetail, 2000);
 
   // 音频管线预热：降噪引擎异步初始化（未就绪期自动旁路，其余 DSP 照常）
-  micPipeline = new MicPipeline({ denoise: cfg.settings.denoiseEnabled !== false });
+  micPipeline = new MicPipeline({
+    denoise: cfg.settings.denoiseEnabled !== false,
+    ...(cfg.settings.micTune || {}),
+  });
   micPipeline.initDenoiser().then(engine => {
-    if (engine === 'df') console.log('[mic] DeepFilterNet3 降噪已就绪');
+    if (engine === 'df') console.log('[mic] DeepFilterNet3 降噪已就绪 attenLim=' + (cfg.settings.micTune || {}).attenLimDb + 'dB');
     else if (engine === 'rnnoise') console.log('[mic] RNNoise 降噪已就绪（DFN3 回退）');
   });
+
+  // 链路体检：按上次配置恢复（默认关，纯诊断无副作用）
+  if (cfg.settings.micDiag) startMicDiag(true);
 
   // 普通（非 AI）模式（mac）：F1-F12/PrtSc 走标准报文进回注模块；绑定了动作的键在此拦截。
   // 返回 'block'=屏蔽原键、'passthrough'=动作+原键都触发、null=未绑定走原生回注
@@ -747,6 +753,24 @@ ipcMain.on('sound-log', (_e, msg) => console.log('[sound]', msg));
 // 渲染端观测日志（麦克风桥接等静默链路）统一落盘，便于「时灵时不灵」类问题回溯
 ipcMain.on('renderer-log', (_e, msg) => console.log('[renderer]', msg));
 
+// ---------- 麦克风链路体检（micDiag 开关，默认关） ----------
+// 语音问题「识别率低」无法只靠听判断，必须有量化指标。落盘 app.log 的 [diag] 行：
+//   SNR/底噪/门控/增益/电平 —— 判断是噪声太大、增益不够，还是链路在丢帧
+// 渲染端另有 [bridge] 欠载行，两侧合看可定位「噪声问题」还是「链路断音问题」
+let micDiagTimer = null;
+function startMicDiag(on) {
+  if (micDiagTimer) { clearInterval(micDiagTimer); micDiagTimer = null; }
+  if (!on) return;
+  micDiagTimer = setInterval(() => {
+    if (!micPipeline) return;
+    const d = micPipeline.diagnostics();
+    console.log(`[diag] SNR=${d.snrDb}dB vad=${d.vad} noiseFloor=${d.noiseFloor} level=${d.level} gate=${d.gate} gain=${d.gain} fifo=${d.fifoLen} engine=${d.engine}`);
+  }, 1000);
+}
+
+// 设置页「立即体检」：返回当前 DSP 快照，用于调参前后对比
+ipcMain.handle('mic-diagnostics', () => (micPipeline ? micPipeline.diagnostics() : null));
+
 ipcMain.handle('sound-test', () => {
   if (!soundWin || soundWin.isDestroyed()) return { ok: false };
   soundWin.webContents.send('keystroke');
@@ -974,6 +998,10 @@ ipcMain.handle('set-settings', (_e, settings) => {
   if ('autostart' in settings) setAutostart(settings.autostart);
   // 降噪开关：即时生效（旁路/恢复引擎），无需重启
   if ('denoiseEnabled' in settings && micPipeline) micPipeline.setDenoise(settings.denoiseEnabled !== false);
+  // DSP 调参（远距识别优化）：即时生效，attenLim 走 df_set_atten_lim 不重建引擎
+  if ('micTune' in settings && micPipeline && settings.micTune) micPipeline.setTune(settings.micTune);
+  // 链路体检开关
+  if ('micDiag' in settings) startMicDiag(!!settings.micDiag);
   if ('statsEnabled' in settings && stats) {
     applyStatsCounting();
     // 统计关但音效开：轮询保持（keystroke 事件源不能断）；两者都关才停

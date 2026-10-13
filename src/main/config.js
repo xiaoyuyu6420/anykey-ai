@@ -32,6 +32,22 @@ const DEFAULTS = {
                              // UU远程「仅控制端响应的快捷键」白名单只收单键，加一条 F13 即可
                              // 彻底不转发。仅影响语音触发键，其他绑定键透传不变
     denoiseEnabled: true,    // RNNoise 神经降噪 + DSP 增强链（高通/VAD 门控 AGC/软限幅）
+    // 远距识别优化（DSP 可调参数，设置页改即时生效）。默认值即优化后取值：
+    //   gateRelease 0.25 —— 门控释放（原 0.04 太慢，句中换气被持续压低导致断句漏字）
+    //   agcTarget  3600  —— AGC 目标 RMS -19dBFS（原 4200 偏激进，底噪被一起抬起）
+    //   attenLimDb 3     —— DFN3 最大衰减（原 6dB 过强，远距弱语音的 s/sh 辅音会被当噪声吃掉）
+    //   gateOpenMul 3  —— 语音判定倍数（原 5）。远距语音 RMS 600~900 低于原阈值 750，
+    //     永远判不出语音导致 AGC 不启动——这是「越远越听不清」的直接元凶
+    //   gateFloor 0.05 / agcMaxGain 8 —— 沿用原值，作为调节范围的锚点
+    micTune: {
+      gateRelease: 0.25,
+      agcTarget: 3600,
+      attenLimDb: 3,
+      gateOpenMul: 3,
+      gateFloor: 0.05,
+      agcMaxGain: 8,
+    },
+    micDiag: false,          // 链路体检：欠载/SNR/电平实时落盘 app.log（排查用，日常关）
     statsEnabled: true,      // 打字统计（只记每键计数与每日总数，纯本地 stats.json）
     fatigueEnabled: true,    // 疲劳提醒（连续打字满阈值弹系统通知）
     fatigueMinutes: 25,      // 疲劳提醒阈值（分钟）

@@ -1,6 +1,11 @@
 const { contextBridge, ipcRenderer } = require('electron');
+const path = require('path');
+const { pathToFileURL } = require('url');
 
 contextBridge.exposeInMainWorld('aikey', {
+  // AudioWorklet 模块的 file:// URL——打包后 app.asar 内直接 addModule 不可靠，
+  // 由主进程侧把路径转 URL 再交给渲染进程
+  micWorkletUrl: () => pathToFileURL(path.join(__dirname, '..', 'renderer', 'mic-bridge-worklet.js')).href,
   getState: () => ipcRenderer.invoke('get-state'),
   setBinding: (keyId, action, mode) => ipcRenderer.invoke('set-binding', keyId, action, mode),
   setSettings: s => ipcRenderer.invoke('set-settings', s),
@@ -18,6 +23,8 @@ contextBridge.exposeInMainWorld('aikey', {
   onAiMode: cb => ipcRenderer.on('ai-mode', (_e, on) => cb(on)),
   onBattery: cb => ipcRenderer.on('battery', (_e, b) => cb(b)),
   micControl: on => ipcRenderer.invoke('mic-control', on),
+  // 麦克风链路体检（DSP 实时快照：SNR/底噪/门控/增益/电平）
+  micDiagnostics: () => ipcRenderer.invoke('mic-diagnostics'),
   // 打字音效
   soundTest: () => ipcRenderer.invoke('sound-test'),
   pickDir: () => ipcRenderer.invoke('pick-dir'),

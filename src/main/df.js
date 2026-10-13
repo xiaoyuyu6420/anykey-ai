@@ -24,7 +24,7 @@ class DeepFilter {
   }
 
   // attenLimDb：最大衰减限制（dB）。越小降噪越保守；null 用默认 6dB
-  init(attenLimDb = 6) {
+  init(attenLimDb = 3) {
     if (this.ready) return true;
     // df_create 对坏路径会原生 panic 直接杀进程——先自行校验文件存在
     const fs = require('fs');
@@ -40,6 +40,7 @@ class DeepFilter {
     this._free = lib.func('void df_free(void* st)');
 
     this._st = this._create(MODEL_PATH, attenLimDb, null);
+    this.attenLimDb = attenLimDb;
     if (!this._st) throw new Error('df_create 失败（模型加载错误）');
     this.frameLen = Number(this._frameLenFn(this._st));
     // 帧长校验：stub 环境/异常返回下避免分配出坏缓冲
@@ -49,6 +50,18 @@ class DeepFilter {
     this._in = new Float32Array(this.frameLen);
     this._out = new Float32Array(this.frameLen);
     this.ready = true;
+    return true;
+  }
+
+  // 运行时调衰减上限，无需重建引擎（df_set_atten_lim）。
+  // 远距说话时噪声与语音一起进来，过强降噪会把 s/sh 辅音当噪声吃掉——
+  // 调小 attenLim（更保守）能保住辅音，代价是残余底噪略高。
+  setAttenLim(db) {
+    if (!this.ready || !this._setAtten) return false;
+    const v = Math.max(0, Math.min(24, Number(db)));
+    if (!Number.isFinite(v)) return false;
+    this._setAtten(this._st, v);
+    this.attenLimDb = v;
     return true;
   }
 

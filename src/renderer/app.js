@@ -2,6 +2,7 @@
 
 import { createKeyboard3D, setRenderPaused } from './kb3d.js';
 import { animate, stagger } from '../../vendor/animejs/anime.esm.min.js';
+import { initQualityPanel, pushQualitySample } from './quality-panel.js';
 
 const TYPES = [
   { value: 'none',    label: '不动作' },
@@ -97,6 +98,7 @@ async function init() {
   initModalShell();
   initReveal();
 
+  initQualityPanel();
   initMicBridge();
   initSound();
   initStats();
@@ -769,7 +771,14 @@ function toast(msg, isErr = false) {
 // ---------- 键盘麦克风 → 虚拟声卡桥接 ----------
 // 主进程把解码后的 PCM（int16 LE @16kHz 单声道，约 120ms 一批）发过来，
 // 这里经 WebAudio 播到用户选的输出设备（虚拟声卡的播放端，如 CABLE Input）。
-const bridge = { ctx: null, node: null, queue: [], chunkOff: 0, enabled: false, sinkId: '', underruns: 0, _logTs: 0, _undLogTs: 0 };
+// worklet 节点 + 统计。queue/chunkOff 已移入 worklet（音频线程），
+// 主线程只做「收 PCM → postMessage」转发，欠载计数由 worklet 上报。
+const bridge = {
+  ctx: null, node: null, workletUrl: null, enabled: false, sinkId: '',
+  underruns: 0, _logTs: 0, _undLogTs: 0,
+  // 链路体检（可开关，落盘 app.log）——欠载/SNR/声道数/实际采样率
+  diag: false, _diagTs: 0, _undTotal: 0, _diagPeak: 0,
+};
 // 桥接日志（限频 5s，force 绕过）经主进程落盘：微信输入法「唤不起/录到静音」类问题的唯一观测面
 function bridgeLog(msg, force) {
   const now = Date.now();
@@ -778,6 +787,19 @@ function bridgeLog(msg, force) {
   try { window.aikey.log('[bridge] ' + msg); } catch (_) {}
 }
 let micLevelTimer = null;
+
+// worklet 模块 URL：优先 preload 提供的（主进程转好 file:// URL）。
+// asar 打包后 file:// 指向 app.asar 内可能不可加载，退回相对 import.meta.url，
+// 再退回 window 自身 origin，最后兜底 './mic-bridge-worklet.js'。
+function workletFileUrl() {
+  try {
+    if (window.aikey && typeof window.aikey.micWorkletUrl === 'function') {
+      const u = window.aikey.micWorkletUrl();
+      if (u) return u;
+    }
+  } catch (_) {}
+  return './mic-bridge-worklet.js';
+}
 
 async function initMicBridge() {
   const optBridge = document.getElementById('opt-mic-bridge');
@@ -854,13 +876,13 @@ async function initMicBridge() {
   optBridge.onchange = async () => {
     state.settings.micBridgeEnabled = optBridge.checked;
     await window.aikey.setSettings({ micBridgeEnabled: optBridge.checked });
-    applyBridge();
+    applyBridge().catch(() => {});
   };
 
   selSink.onchange = async () => {
     state.settings.micSinkId = selSink.value;
     await window.aikey.setSettings({ micSinkId: selSink.value });
-    applyBridge();
+    applyBridge().catch(() => {});
   };
   document.getElementById('mic-refresh').onclick = () => refreshSinks();
 
@@ -900,24 +922,17 @@ async function initMicBridge() {
       if (bytes.length) bridgeLog(`PCM 丢弃：桥未就绪（enabled=${bridge.enabled}）`, true);
       return;
     }
-    // int16 LE → float32
-    const n = bytes.length >> 1;
-    const f = new Float32Array(n);
+    // 质量面板用同一批字节——面板显示的就是识别引擎真正收到的信号
+    pushQualitySample(bytes);
     let peak = 0;
-    for (let i = 0; i < n; i++) {
-      const v = (bytes[i * 2] | (bytes[i * 2 + 1] << 8)) << 16 >> 16;
-      f[i] = v / 32768;
-      const a = Math.abs(v);
+    for (let i = 0; i < bytes.length; i += 2) {
+      const a = Math.abs((bytes[i] | (bytes[i + 1] << 8)) << 16 >> 16);
       if (a > peak) peak = a;
     }
-    bridge.queue.push(f);
-    bridge.lastFeed = Date.now();
-    // 防积压：超 5 帧（每帧 120ms 批 ≈ 600ms 缓冲）丢最旧。队首被丢弃时
-    // chunkOff 必须归零——它指向的是旧队首的内部偏移，不重置会从新队首中间开始播（跳音）
-    if (bridge.queue.length > 5) {
-      bridge.queue.splice(0, bridge.queue.length - 5);
-      bridge.chunkOff = 0;
-    }
+    // 转交音频线程排队播放（worklet 内做 int16→float，量大不走 IPC 结构化克隆）
+    bridge.node.port.postMessage({ type: 'pcm', bytes }, [bytes.buffer]);
+    if (peak > bridge._diagPeak) bridge._diagPeak = peak;
+    bridgeLog(`欠载累计 ×${bridge._undTotal}`, false);
     // 电平条（限频刷新）
     if (peak > 0 && !micLevelTimer) {
       micLevelTimer = setTimeout(() => {
@@ -949,19 +964,19 @@ async function initMicBridge() {
       else toast('未找到虚拟声卡（BlackHole/VB-CABLE），请手动选择播放设备', true);
     }
     bridge.sinkId = selSink.value;
-    applyBridge();
+    await applyBridge();
   }
 
   function stopBridge() {
-    if (bridge.node) { try { bridge.node.disconnect(); } catch (_) {} }
+    if (bridge.node) {
+      try { bridge.node.port.postMessage({ type: 'flush' }); bridge.node.disconnect(); } catch (_) {}
+    }
     if (bridge.ctx) { try { bridge.ctx.close(); } catch (_) {} }
     bridge.ctx = bridge.node = null;
-    bridge.queue = [];
-    bridge.chunkOff = 0; // 指向旧队首的内部偏移，不归零则重建后首帧从中间开始播（跳音）
     bridge.enabled = false;
   }
 
-  function applyBridge() {
+  async function applyBridge() {
     stopBridge();
     if (!state.settings.micBridgeEnabled) return;
     try {
@@ -969,35 +984,41 @@ async function initMicBridge() {
       if (bridge.sinkId && bridge.sinkId !== 'default') opts.sinkId = bridge.sinkId;
       bridge.ctx = new AudioContext(opts);
       const sinkLabel = selSink.selectedOptions[0] ? selSink.selectedOptions[0].textContent : bridge.sinkId;
-      bridgeLog(`启动：请求 16k 实际 ${bridge.ctx.sampleRate}Hz，sink=${sinkLabel}`, true);
+      // addModule 是 Promise——必须 await 完成后再建 node，否则模块尚未注册。
+      // 打包后 file:// 指向 app.asar 内可能不可加载，退回相对路径再试一次。
+      let modUrl = workletFileUrl();
+      try {
+        await bridge.ctx.audioWorklet.addModule(modUrl);
+      } catch (e) {
+        modUrl = './mic-bridge-worklet.js';
+        await bridge.ctx.audioWorklet.addModule(modUrl);
+      }
+      const node = new AudioWorkletNode(bridge.ctx, 'mic-bridge-processor', {
+        numberOfInputs: 0,
+        numberOfOutputs: 1,
+        outputChannelCount: [state.settings.micOutChannels || 2],
+      });
+      bridgeLog(`启动(worklet)：请求 16k 实际 ${bridge.ctx.sampleRate}Hz，sink=${sinkLabel}`, true);
       bridge.ctx.onstatechange = () => bridgeLog(`AudioContext 状态 → ${bridge.ctx.state}`, true);
-      const sp = bridge.ctx.createScriptProcessor(2048, 0, 1);
-      sp.onaudioprocess = e => {
-        const out = e.outputBuffer.getChannelData(0);
-        let w = 0;
-        while (w < out.length && bridge.queue.length) {
-          const chunk = bridge.queue[0];
-          const take = Math.min(chunk.length - bridge.chunkOff, out.length - w);
-          out.set(chunk.subarray(bridge.chunkOff, bridge.chunkOff + take), w);
-          bridge.chunkOff += take; w += take;
-          if (bridge.chunkOff >= chunk.length) { bridge.queue.shift(); bridge.chunkOff = 0; }
-        }
-        if (w < out.length) {
-          out.fill(0, w); // 欠载时补静音
-          // 欠载=输入法录到空洞。仅统计「音频刚流过」的窗口——纯静音期队列本就为空
-          if (bridge.lastFeed && Date.now() - bridge.lastFeed < 2000) {
-            bridge.underruns++;
-            if (Date.now() - bridge._undLogTs > 5000) {
-              bridge._undLogTs = Date.now();
-              bridgeLog(`缓冲欠载 ×${bridge.underruns}（队列=${bridge.queue.length}）`);
-            }
-          }
+      node.port.onmessage = e => {
+        const d = e.data;
+        if (d.type !== 'underrun') return;
+        bridge._undTotal = d.count;
+        bridge.underruns = d.count;
+        const now = Date.now();
+        if (now - bridge._undLogTs > 5000) {
+          bridge._undLogTs = now;
+          bridgeLog(`缓冲欠载 ×${d.count}（空窗 ${d.gap.toFixed(2)}s）`);
         }
       };
-      sp.connect(bridge.ctx.destination);
-      bridge.node = sp;
+      node.connect(bridge.ctx.destination);
+      bridge.node = node;
       bridge.enabled = true;
+      bridge._undTotal = 0;
       if (bridge.ctx.state === 'suspended') bridge.ctx.resume();
+      if (bridge.diag) {
+        bridgeLog(`[diag] sink=${sinkLabel} ctxRate=${bridge.ctx.sampleRate} outCh=${state.settings.micOutChannels || 2} baseLatency=${bridge.ctx.baseLatency?.toFixed(3)}`, true);
+      }
     } catch (e) {
       bridgeLog(`桥接启动失败: ${e.message}`, true);
       toast('桥接启动失败: ' + e.message, true);
@@ -1005,6 +1026,91 @@ async function initMicBridge() {
   }
 
   await refreshSinks();
+  initTunePanel();
+}
+
+// ---------- 识别质量调参面板 ----------
+// 每项独立即时生效（set-settings → setTune），方便逐项 A/B 定位问题：
+// 改了听感不对就退一格，不影响其他项。体检开关走主进程 [diag] 落盘日志。
+function initTunePanel() {
+  const box = document.getElementById('mic-tune-box');
+  if (!box) return;
+  const d = state.settings.micTune || {};
+  const def = { gateRelease: 0.25, agcTarget: 3600, attenLimDb: 3, agcMaxGain: 8 };
+  const cur = { ...def, ...d };
+
+  const elAtten = document.getElementById('tune-atten');
+  const elRel = document.getElementById('tune-release');
+  const elAgc = document.getElementById('tune-agc');
+  const elGain = document.getElementById('tune-maxgain');
+  const elDiag = document.getElementById('opt-mic-diag');
+  const btnSample = document.getElementById('mic-diag-sample');
+  const txtDiag = document.getElementById('mic-diag-text');
+  const btnReset = document.getElementById('tune-reset');
+
+  const labels = {
+    'tune-atten': document.getElementById('tune-atten-v'),
+    'tune-release': document.getElementById('tune-release-v'),
+    'tune-agc': document.getElementById('tune-agc-v'),
+    'tune-maxgain': document.getElementById('tune-maxgain-v'),
+  };
+  const paint = () => {
+    labels['tune-atten'].textContent = elAtten.value + ' dB';
+    labels['tune-release'].textContent = (elRel.value / 100).toFixed(2);
+    labels['tune-agc'].textContent = elAgc.value;
+    labels['tune-maxgain'].textContent = elGain.value + '×';
+  };
+  const syncInputs = () => {
+    elAtten.value = cur.attenLimDb;
+    elRel.value = Math.round(cur.gateRelease * 100);
+    elAgc.value = cur.agcTarget;
+    elGain.value = cur.agcMaxGain;
+    paint();
+  };
+
+  elAtten.value = cur.attenLimDb;
+  elRel.value = Math.round(cur.gateRelease * 100);
+  elAgc.value = cur.agcTarget;
+  elGain.value = cur.agcMaxGain;
+  elDiag.checked = !!state.settings.micDiag;
+  paint();
+
+  const push = async () => {
+    cur.attenLimDb = Number(elAtten.value);
+    cur.gateRelease = Number(elRel.value) / 100;
+    cur.agcTarget = Number(elAgc.value);
+    cur.agcMaxGain = Number(elGain.value);
+    state.settings.micTune = { ...cur };
+    await window.aikey.setSettings({ micTune: { ...cur } });
+  };
+  for (const el of [elAtten, elRel, elAgc, elGain]) {
+    el.oninput = paint;
+    el.onchange = push;
+  }
+
+  elDiag.onchange = async () => {
+    await window.aikey.setSettings({ micDiag: elDiag.checked });
+    toast(elDiag.checked ? '链路体检已开启，指标写入 app.log' : '链路体检已关闭');
+  };
+
+  btnSample.onclick = async () => {
+    try {
+      const s = await window.aikey.micDiagnostics();
+      if (!s) { txtDiag.textContent = '音频管线未就绪'; return; }
+      txtDiag.textContent =
+        `SNR ${s.snrDb}dB · 底噪 ${s.noiseFloor} · 门控 ${s.gate} · 增益 ${s.gain}× · 电平 ${s.level} · 引擎 ${s.engine}`;
+    } catch (e) {
+      txtDiag.textContent = '采样失败: ' + e.message;
+    }
+  };
+
+  btnReset.onclick = async () => {
+    Object.assign(cur, def);
+    syncInputs();
+    state.settings.micTune = { ...cur };
+    await window.aikey.setSettings({ micTune: { ...cur } });
+    toast('已恢复默认参数');
+  };
 }
 
 // ---------- 打字音效 ----------

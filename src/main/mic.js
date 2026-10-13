@@ -63,6 +63,25 @@ class MicPipeline {
     this.dstBuf = Buffer.alloc(160);
     this.srcBuf = Buffer.alloc(23);
     this.denoiseWanted = opts.denoise !== false;
+    // DSP 可调参数（远距识别优化，默认值即新行为）：
+    //   gateRelease —— 门控释放系数。旧值 0.04 太慢（语音后十几秒才降回底噪），
+    //     句中换气几百毫秒被持续压低；0.25 ≈ 400ms 半衰，兼顾不切字头尾与句中电平
+    //   agcTarget  —— AGC 目标 RMS。旧值 4200(-17dBFS) 偏激进，底噪被一起抬起；
+    //     3600(-19dBFS) 更贴合 ASR 甜区且留足压缩器余量
+    //   attenLimDb —— DFN3 最大衰减。默认 3dB（原 6dB），远距弱语音保护辅音
+    //   gateOpenMul —— 语音判定倍数（底噪倍数）。关键修复：原值 5 对远距说话是
+    //     「越远越听不清」的直接元凶——实测键盘麦底噪 RMS≈150，阈值 750，
+    //     而远距离语音 RMS 只有 600~900，永远判不出语音，AGC 不启动、
+    //     电平不被抬起，ASR 自然听不清。降到 3（阈值 450）后弱语音能过判定，
+    //     距底噪仍有 3 倍余量，纯噪段门控照常闭合
+    this.tune = {
+      gateRelease: opts.gateRelease ?? 0.25,
+      agcTarget: opts.agcTarget ?? 3600,
+      attenLimDb: opts.attenLimDb ?? 3,
+      gateOpenMul: opts.gateOpenMul ?? 3,
+      gateFloor: opts.gateFloor ?? 0.05,
+      agcMaxGain: opts.agcMaxGain ?? 8,
+    };
 
     this.hp1 = new Biquad(highpassCoeffs(16000, 100));
     this.hp2 = new Biquad(highpassCoeffs(16000, 100));
@@ -73,6 +92,8 @@ class MicPipeline {
     this.denoiseFailLogged = false;
     this._initing = false;        // initDenoiser 并发去重
     this._denoiseRetryAt = 0;     // 引擎坏状态旁路后的冷却重试时刻
+    this.snrDb = 0;               // 最近一帧局部 SNR（链路体检上报用）
+    this._dspDiag = 0;
 
     // 样本 FIFO（16k 域 float32）
     this.fifo = new Float32Array(FIFO_CAP);
@@ -99,7 +120,7 @@ class MicPipeline {
     this._initing = true;
     try {
       try {
-        this.df.init();
+        this.df.init(this.tune.attenLimDb);
         this.engine = 'df';
         return 'df';
       } catch (e) {
@@ -133,6 +154,41 @@ class MicPipeline {
       this.denoiseFailLogged = false;
       this.initDenoiser().catch(() => {});
     }
+  }
+
+  // 运行时调 DSP 参数（设置页改即时生效，无需重启）。
+  // attenLimDb 走 df_set_atten_lim，不重建引擎；其余下次 block 即生效。
+  setTune(patch = {}) {
+    const T = this.tune;
+    for (const k of ['gateRelease', 'agcTarget', 'attenLimDb', 'gateOpenMul', 'gateFloor', 'agcMaxGain']) {
+      if (patch[k] === undefined || patch[k] === null) continue;
+      const v = Number(patch[k]);
+      if (!Number.isFinite(v)) continue;
+      if (k === 'gateRelease') T[k] = Math.max(0.01, Math.min(1, v));
+      else if (k === 'agcTarget') T[k] = Math.max(500, Math.min(8000, v));
+      else if (k === 'attenLimDb') T[k] = Math.max(0, Math.min(24, v));
+      else if (k === 'gateOpenMul') T[k] = Math.max(1.5, Math.min(20, v));
+      else if (k === 'gateFloor') T[k] = Math.max(0, Math.min(1, v));
+      else if (k === 'agcMaxGain') T[k] = Math.max(1, Math.min(32, v));
+    }
+    if (this.engine === 'df' && this.df.ready) this.df.setAttenLim(T.attenLimDb);
+    return this.tune;
+  }
+
+  // 链路体检快照：给设置页/日志看的实时指标
+  diagnostics() {
+    return {
+      engine: this.engine || 'none',
+      snrDb: Math.round(this.snrDb * 10) / 10,
+      vad: Math.round(this.vad * 100) / 100,
+      noiseFloor: Math.round(this.noiseFloor),
+      level: Math.round(this.level),
+      gate: Math.round(this.gate * 100) / 100,
+      gain: Math.round(this.gain * 100) / 100,
+      packets: this.packets,
+      fifoLen: this.fifoLen,
+      tune: { ...this.tune },
+    };
   }
 
   // 蓝牙口：SBC 解码 240 样本进链
@@ -211,6 +267,7 @@ class MicPipeline {
       let vad;
       if (this.engine === 'df') {
         const snr = this.df.processFrame(up48);
+        this.snrDb = snr; // 链路体检：远距说话时 SNR 应稳定在 10dB 以上
         vad = Math.max(0, Math.min(1, snr / 10)); // 局部 SNR 10dB 以上视为语音
       } else {
         const r = this.rnnoise.processFrame(up48);
@@ -234,6 +291,7 @@ class MicPipeline {
   }
 
   _gateAgc(blk) {
+    const T = this.tune;
     let sumSq = 0;
     for (let i = 0; i < BLOCK; i++) sumSq += blk[i] * blk[i];
     const rms = Math.sqrt(sumSq / BLOCK);
@@ -241,19 +299,19 @@ class MicPipeline {
     // VAD：优先用降噪引擎的语音概率（DFN=局部SNR映射 / RNNoise=原生VAD），
     // 未就绪时退化为底噪倍数启发式
     const speech = this.engine
-      ? this.vad > 0.55 || rms > this.noiseFloor * 5
-      : rms > this.noiseFloor * 5;
+      ? this.vad > 0.55 || rms > this.noiseFloor * T.gateOpenMul
+      : rms > this.noiseFloor * T.gateOpenMul;
 
     // 底噪跟踪：只在非语音段收敛
     if (!speech && rms > 20) this.noiseFloor += (rms - this.noiseFloor) * 0.03;
 
     // 门控：语音开、静音压到 -26dB；attack 快 release 慢不切字头尾
-    const gTarget = speech ? 1 : (rms > this.noiseFloor * 4 ? 1 : 0.05);
-    this.gate += (gTarget - this.gate) * (gTarget > this.gate ? 0.5 : 0.04);
+    const gTarget = speech ? 1 : (rms > this.noiseFloor * 4 ? 1 : T.gateFloor);
+    this.gate += (gTarget - this.gate) * (gTarget > this.gate ? 0.5 : T.gateRelease);
 
     // AGC：仅语音段追目标响度；静音段增益缓慢回 1（不再放大底噪）
     if (speech && rms > 50) {
-      const target = Math.min(8, Math.max(1, 4200 / rms));
+      const target = Math.min(T.agcMaxGain, Math.max(1, T.agcTarget / rms));
       this.gain += (target - this.gain) * 0.25;
     } else if (!speech) {
       this.gain += (1 - this.gain) * 0.02;

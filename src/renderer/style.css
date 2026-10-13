@@ -349,6 +349,70 @@ label.pass-line { display: flex; align-items: center; gap: 6px; color: var(--mut
   transition: width .08s linear;
 }
 
+/* ---------- 音频质量可视化（v0.12.4） ----------
+   三个视图各回答一个问题：
+     波形   —— 有没有断音（空洞）/ 削波（贴顶）
+     指标带 —— AGC 有没有在工作、底噪高不高
+     频谱   —— 噪声集中在哪段频率，降噪有没有下压
+   画布用 devicePixelRatio 缩放，避免高分屏发虚。 */
+.qc { margin: 10px 0 4px; }
+.qc-head {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px;
+}
+.qc-tabs { display: flex; gap: 4px; }
+.qc-tab {
+  cursor: pointer; font-size: 11px; color: var(--muted);
+  background: transparent; border: 1px solid var(--line);
+  border-radius: 7px; padding: 4px 9px; transition: all .18s var(--ease);
+}
+.qc-tab:hover { color: var(--text); border-color: rgba(79, 140, 255, .45); }
+.qc-tab.on {
+  color: var(--accent); border-color: rgba(79, 140, 255, .6);
+  background: rgba(79, 140, 255, .12); box-shadow: var(--glow);
+}
+.qc-verdict {
+  margin-left: auto; font-size: 11px; padding: 3px 9px; border-radius: 999px;
+  border: 1px solid var(--line); color: var(--muted); white-space: nowrap;
+}
+.qc-verdict.ok { color: var(--ok); border-color: rgba(62, 207, 142, .4); background: rgba(62, 207, 142, .1); }
+.qc-verdict.warn { color: var(--warn); border-color: rgba(255, 178, 36, .4); background: rgba(255, 178, 36, .1); }
+.qc-verdict.err { color: var(--err); border-color: rgba(255, 93, 108, .4); background: rgba(255, 93, 108, .1); }
+
+.qc-canvas-wrap {
+  position: relative; border: 1px solid var(--line); border-radius: var(--radius);
+  background: rgba(8, 10, 15, .55); overflow: hidden;
+}
+.qc-canvas-wrap canvas { display: block; width: 100%; height: 132px; }
+.qc-legend {
+  display: flex; gap: 12px; flex-wrap: wrap; padding: 6px 10px;
+  border-top: 1px solid var(--line); font-size: 10px; color: var(--muted);
+}
+.qc-legend span { display: inline-flex; align-items: center; gap: 4px; }
+.qc-dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; }
+
+/* 指标条：横向刻度 + 当前值指针 */
+.qc-metrics { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px 14px; }
+.qc-metric {
+  border: 1px solid var(--line); border-radius: 9px; padding: 7px 9px;
+  background: rgba(8, 10, 15, .45);
+}
+.qc-metric .k { font-size: 10px; color: var(--muted); display: block; margin-bottom: 3px; }
+.qc-metric .v { font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.qc-metric .u { font-size: 10px; color: var(--muted); margin-left: 2px; }
+.qc-metric .track {
+  position: relative; height: 4px; margin-top: 6px; border-radius: 2px;
+  background: rgba(255, 255, 255, .07); overflow: hidden;
+}
+.qc-metric .fill { position: absolute; inset: 0 auto 0 0; border-radius: 2px; transition: width .2s linear; }
+/* 目标区间标记（ASR 甜区）——指针落在这段里说明电平合适 */
+.qc-metric .band {
+  position: absolute; top: 0; bottom: 0; background: rgba(62, 207, 142, .16);
+  border-left: 1px solid rgba(62, 207, 142, .35); border-right: 1px solid rgba(62, 207, 142, .35);
+}
+.qc-hint { font-size: 11px; color: var(--muted); margin: 8px 0 0; }
+.qc-hint b { color: var(--text); font-weight: 600; }
+.qc-spark { display: block; width: 100%; height: 34px; margin-top: 5px; }
+
 /* ---------- 按住说话键勾选 ---------- */
 .trigger-keys { display: flex; flex-wrap: wrap; gap: 4px 12px; flex: 1; }
 .trigger-keys .tk {
