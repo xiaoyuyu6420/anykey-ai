@@ -221,7 +221,7 @@ main { padding: 16px 20px 40px; }
   position: relative; top: 1px;
   transition: all .18s var(--ease);
 }
-.mode-tab:hover { color: var(--text); }
+.mic-mode-tab:hover { color: var(--text); }
 .mode-tab.active {
   background: linear-gradient(180deg, rgba(79, 140, 255, .14), rgba(79, 140, 255, .05));
   color: var(--accent); font-weight: 600; border-color: var(--line-strong);
@@ -420,17 +420,18 @@ details.panel.fold > .btn-row:last-child { padding-bottom: 0; }
   font-size: 12px; color: var(--text); cursor: pointer; white-space: nowrap;
 }
 .primary-btn.sm { padding: 6px 14px; font-size: 12px; }
-/* 三档处理切换：比复选框更能表达「三选一」的语义 */
-.mode-tabs { display: flex; gap: 6px; margin-bottom: 9px; }
-.mode-tab {
+/* 三档处理切换：类名带 mic- 前缀——裸 .mode-tab 已被 AI 层档位按钮占用，
+   复用会导致两处按钮互相抢处理器（踩过一次） */
+.mic-mode-tabs { display: flex; gap: 6px; margin-bottom: 9px; }
+.mic-mode-tab {
   flex: 1; cursor: pointer; text-align: center; font-size: 12px;
   color: var(--muted); background: rgba(0, 0, 0, .2);
   border: 1px solid var(--line); border-radius: 9px; padding: 8px 10px;
   transition: all .18s var(--ease);
 }
-.mode-tab i { display: block; font-style: normal; font-size: 10px; opacity: .7; margin-top: 2px; }
-.mode-tab:hover { color: var(--text); border-color: rgba(79, 140, 255, .5); }
-.mode-tab.on {
+.mic-mode-tab i { display: block; font-style: normal; font-size: 10px; opacity: .7; margin-top: 2px; }
+.mic-mode-tab:hover { color: var(--text); border-color: rgba(79, 140, 255, .5); }
+.mic-mode-tab.on {
   color: var(--accent); border-color: rgba(79, 140, 255, .6);
   background: rgba(79, 140, 255, .14); box-shadow: 0 0 12px rgba(79, 140, 255, .18);
 }

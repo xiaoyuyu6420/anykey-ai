@@ -1143,7 +1143,7 @@ function initTunePanel() {
     hp: '已切到「只去低频」——去掉 100Hz 以下的轰鸣，不做降噪与增益。若「刺」消失说明来自低频',
     full: '已切到「完整处理」——降噪 + 稳态谱减 + 增益 + 门控全开',
   };
-  const modeTabs = Array.from(document.querySelectorAll('.mode-tab'));
+  const modeTabs = Array.from(document.querySelectorAll('.mic-mode-tab'));
   const paintMode = () => {
     const cur = state.settings.micMode || (state.settings.micBypass ? 'raw' : 'full');
     for (const t of modeTabs) t.classList.toggle('on', t.dataset.mode === cur);
