@@ -235,19 +235,30 @@ function onAudioPacket(buf, opts = {}) {
   }
 }
 
+// 攒批周期（v0.16.1）：原 120ms 是「主进程 IPC 开销」与「延迟」的权衡，
+// 但它同时决定了**松开说话键时还会有多少音频卡在缓冲里**。
+// 微信输入法在收到键抬起后会立刻停止录音并送去识别——这段尾音若还没送到，
+// 就会被整段丢掉，表现为「末尾一两个字没了，得重说」。
+// 实测该链路主进程开销很轻（降噪已默认关闭），降到 60ms 安全。
+const PCM_BATCH_MS = 60;
+
 function enqueuePcm(chunk) {
   // 桥未启用：渲染端收到即丢，白白 IPC 传 ~32KB/s——主进程侧直接丢弃
   if (!cfg || cfg.settings.micBridgeEnabled !== true) return;
   pcmBatch.push(chunk);
   if (!pcmBatchTimer) {
-    pcmBatchTimer = setTimeout(() => {
-      pcmBatchTimer = null;
-      if (pcmBatch.length && win && !win.isDestroyed()) {
-        win.webContents.send('mic-pcm', Buffer.concat(pcmBatch));
-      }
-      pcmBatch = [];
-    }, 120);
+    pcmBatchTimer = setTimeout(flushPcmBatch, PCM_BATCH_MS);
   }
+}
+
+// 立即下发积压的 PCM。松开说话键时必须调用：否则最多一个攒批周期的尾音
+// 要等到定时器自然触发才送达，而识别引擎那时已经停止录音了。
+function flushPcmBatch() {
+  if (pcmBatchTimer) { clearTimeout(pcmBatchTimer); pcmBatchTimer = null; }
+  if (pcmBatch.length && win && !win.isDestroyed()) {
+    win.webContents.send('mic-pcm', Buffer.concat(pcmBatch));
+  }
+  pcmBatch = [];
 }
 
 function startPsBlocker() {
@@ -555,7 +566,11 @@ function onKey({ code, keyId, phase }) {
   const micKeys = cfg.settings.micTriggerKeys || [];
   if (!macroArmed && micKeys.includes(keyId) && session) {
     if (phase === 'down') session.askVoice();
-    else session.stopVoice();
+    else {
+      // 先冲刷尾音再关麦：顺序不能反——识别引擎在键抬起后立刻停止录音
+      flushPcmBatch();
+      session.stopVoice();
+    }
   }
   // cmd=159 厂商码只在 AI 模式上报 → 此路径一律用 AI 模式绑定集
   const binding = (cfg.bindingsAi && cfg.bindingsAi[keyId]) || { type: 'none' };
@@ -1145,6 +1160,7 @@ ipcMain.handle('session-reconnect', () => { if (session) session.reconnect(); })
 
 ipcMain.handle('mic-control', (_e, on) => {
   if (!session) return { ok: false, error: '会话未初始化' };
+  if (!on) flushPcmBatch();          // 同上：先送尾音，再关麦
   const ok = on ? session.askVoice() : session.stopVoice();
   return { ok, online: sessionOnline };
 });
