@@ -35,17 +35,25 @@ const DEFAULTS = {
     // 远距识别优化（DSP 可调参数，设置页改即时生效）。默认值即优化后取值：
     //   gateRelease 0.25 —— 门控释放（原 0.04 太慢，句中换气被持续压低导致断句漏字）
     //   agcTarget  3600  —— AGC 目标 RMS -19dBFS（原 4200 偏激进，底噪被一起抬起）
-    //   attenLimDb 3     —— DFN3 最大衰减（原 6dB 过强，远距弱语音的 s/sh 辅音会被当噪声吃掉）
+    //   attenLimDb 6     —— DFN3 最大衰减。实测（工具 CDP 扫描真实麦克风）：
+    //     越低降噪越弱——2dB→16.2dB 降噪量、6dB→20.8dB。曾一度降到 3dB 以求
+    //     「保护辅音」，实测方向错了：底噪偏高需要更强降噪，调低反而压不住底噪、
+    //     电平被门控吃掉。注意 libdf 把 0 当「无限制」而非「不降噪」，是 API 陷阱
+    //   （attenLim 越大降噪越强，24dB 后收益递减；6dB 是收益/风险平衡点）
     //   gateOpenMul 3  —— 语音判定倍数（原 5）。远距语音 RMS 600~900 低于原阈值 750，
     //     永远判不出语音导致 AGC 不启动——这是「越远越听不清」的直接元凶
-    //   gateFloor 0.05 / agcMaxGain 8 —— 沿用原值，作为调节范围的锚点
+    //   agcMaxGain 8 → 32 —— 实测发现：降噪后语音 RMS 只剩 25（底噪 12），
+    //     AGC 目标 3600 需要约 140× 才能把电平推到 ASR 甜区（800+），
+    //     而旧上限把增益卡在 12×，导致送进识别引擎的电平只有 114。
+    //     提高上限让 AGC 在弱信号时补得够，SNR 不变但电平进甜区（ASR 对绝对电平敏感）
+    //   gateFloor 0.05 —— 沿用原值
     micTune: {
       gateRelease: 0.25,
       agcTarget: 3600,
-      attenLimDb: 3,
+      attenLimDb: 6,
       gateOpenMul: 3,
       gateFloor: 0.05,
-      agcMaxGain: 8,
+      agcMaxGain: 32,
     },
     micDiag: false,          // 链路体检：欠载/SNR/电平实时落盘 app.log（排查用，日常关）
     // 稳态噪声扣除（v0.12.5）：针对「底噪偏高」——麦自噪/风扇/房间底噪是持续稳态的，

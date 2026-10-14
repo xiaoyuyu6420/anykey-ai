@@ -24,7 +24,7 @@ const BLOCK = 160;
 // 恒定返回高 SNR 会把静音段也判成语音，导致分段统计错位。
 function attachDf(p, gain, snrLoud = 25, snrQuiet = 0.5) {
   p.df = {
-    ready: true, attenLimDb: 3,
+    ready: true, attenLimDb: 6,
     init() { return true; },
     setAttenLim() { return true; },
     processFrame(f) {

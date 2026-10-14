@@ -34,12 +34,13 @@ function attachFakeDf(p, snr = 20) {
     const p = new MicPipeline();
     ok(p.tune.gateRelease === 0.25, `门控释放默认 0.25（实际 ${p.tune.gateRelease}）`);
     ok(p.tune.agcTarget === 3600, `AGC 目标默认 3600（实际 ${p.tune.agcTarget}）`);
-    ok(p.tune.attenLimDb === 3, `DFN3 衰减上限默认 3dB（实际 ${p.tune.attenLimDb}）`);
-    ok(p.tune.gateOpenMul === 3 && p.tune.gateFloor === 0.05 && p.tune.agcMaxGain === 8,
+    ok(p.tune.attenLimDb === 6, `DFN3 衰减上限默认 6dB（实测数据支持的平衡点，实际 ${p.tune.attenLimDb}）`);
+    ok(p.tune.gateOpenMul === 3 && p.tune.gateFloor === 0.05 && p.tune.agcMaxGain === 32,
       '语音判定倍数 3（远距语音可过判定）/ 门底 0.05 / 最大增益 8');
     // 旧值必须与新值不同——否则本测试在验证一个没生效的改动
     ok(p.tune.gateRelease !== 0.04, '门控释放确实从旧值 0.04 改掉了');
-    ok(p.tune.attenLimDb !== 6, 'attenLim 确实从旧值 6dB 改掉了');
+    // 曾降到 3dB 求「保护辅音」，实测方向错了（底噪偏高需更强降噪），已回到 6dB
+    ok(typeof p.tune.attenLimDb === 'number' && p.tune.attenLimDb > 0, 'attenLim 为正值（0 在 libdf 是「无限制」，须避开）');
   }
 
   console.log('[T2] setTune 运行时生效 + 越界钳制');
@@ -128,7 +129,7 @@ function attachFakeDf(p, snr = 20) {
     }
     ok(d.engine === 'df', `engine 正确（${d.engine}）`);
     ok(d.snrDb === 20, `SNR 采到假引擎返回值（${d.snrDb}）`);
-    ok(typeof d.tune === 'object' && d.tune.attenLimDb === 3, 'tune 快照含 attenLim');
+    ok(typeof d.tune === 'object' && d.tune.attenLimDb === 6, 'tune 快照含 attenLim');
     ok(Object.keys(d.tune).length === 6, 'tune 快照是拷贝（改了不影响管线）');
   }
 

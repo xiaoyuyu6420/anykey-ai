@@ -76,7 +76,11 @@ class MicPipeline {
     //     句中换气几百毫秒被持续压低；0.25 ≈ 400ms 半衰，兼顾不切字头尾与句中电平
     //   agcTarget  —— AGC 目标 RMS。旧值 4200(-17dBFS) 偏激进，底噪被一起抬起；
     //     3600(-19dBFS) 更贴合 ASR 甜区且留足压缩器余量
-    //   attenLimDb —— DFN3 最大衰减。默认 3dB（原 6dB），远距弱语音保护辅音
+    //   attenLimDb —— DFN3 最大衰减。实测（CDP 扫描真实麦克风）：
+    //     越大降噪越强——2dB→16.2dB 降噪量、6dB→20.8dB，24dB 后收益递减。
+    //     曾降至 3dB 求「保护辅音」，实测方向错了：底噪偏高需要更强降噪，
+    //     调低反而压不住底噪、输出电平被门控吃掉（送进 ASR 只剩 114，甜区是 800+）。
+    //     注意 libdf 把 0 当「无限制」而非「不降噪」——API 陷阱，须避开 0。
     //   gateOpenMul —— 语音判定倍数（底噪倍数）。关键修复：原值 5 对远距说话是
     //     「越远越听不清」的直接元凶——实测键盘麦底噪 RMS≈150，阈值 750，
     //     而远距离语音 RMS 只有 600~900，永远判不出语音，AGC 不启动、
@@ -85,10 +89,10 @@ class MicPipeline {
     this.tune = {
       gateRelease: opts.gateRelease ?? 0.25,
       agcTarget: opts.agcTarget ?? 3600,
-      attenLimDb: opts.attenLimDb ?? 3,
+      attenLimDb: opts.attenLimDb ?? 6,
       gateOpenMul: opts.gateOpenMul ?? 3,
       gateFloor: opts.gateFloor ?? 0.05,
-      agcMaxGain: opts.agcMaxGain ?? 8,
+      agcMaxGain: opts.agcMaxGain ?? 32,
     };
 
     this.hp1 = new Biquad(highpassCoeffs(16000, 100));
