@@ -122,11 +122,15 @@
         <div class="panel-head">
           <span class="panel-title">声音对比</span>
         </div>
-        <div class="btn-row">
-          <label class="chk"><input type="checkbox" id="opt-bypass" /> 原始音频</label>
-          <button id="rec-test" class="primary-btn sm">录音测试</button>
+        <div class="mode-tabs">
+          <button class="mode-tab" data-mode="raw">原始<i>全跳过</i></button>
+          <button class="mode-tab" data-mode="hp">只去低频<i>去掉轰鸣</i></button>
+          <button class="mode-tab" data-mode="full">完整处理<i>降噪+增益</i></button>
         </div>
-        <p class="panel-hint" id="rec-hint">勾「原始音频」跳过全部处理，听到键盘麦原声。点「录音测试」把送进识别引擎的音频存成 WAV，两段对比着听。</p>
+        <div class="btn-row">
+          <button id="rec-test" class="primary-btn sm">录音测试</button>
+          <span class="panel-hint" id="rec-hint" style="margin:0">点它把送进识别引擎的音频存成 WAV，三个档位各录一段对比着听。</span>
+        </div>
       </div>
 
       <div class="panel">

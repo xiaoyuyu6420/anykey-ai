@@ -181,5 +181,48 @@ function attachFakeDf(p, snr = 20) {
   }
 
   console.log(`\n${pass} passed, ${fail} failed`);
+  console.log('[T11] hp 档：只去低频，不做降噪/增益/门控');
+  {
+    const mk = (mode) => {
+      const p = new MicPipeline({ inRate: 16000, mode, noiseSubtract: false });
+      attachFakeDf(p, 0.25);
+      p.engine = 'df';
+      return p;
+    };
+    const BLK = 160;
+    const dcRms = (p) => {
+      // 喂带直流偏置 + 300Hz 交流的信号，看输出还剩什么
+      const src = new Int16Array(BLK);
+      for (let i = 0; i < BLK; i++) src[i] = Math.round(4000 + 8000 * Math.sin(2 * Math.PI * 300 * i / 16000));
+      const out = p.feed(src, BLK);
+      let s = 0, dc = 0;
+      for (let i = 0; i < BLK; i++) { const v = out.readInt16LE(i * 2); s += v * v; dc += v; }
+      return { rms: Math.sqrt(s / BLK), dc: dc / BLK, len: out.length };
+    };
+    const raw = dcRms(mk('raw'));
+    const hp = dcRms(mk('hp'));
+    const full = dcRms(mk('full'));
+    // raw：直流偏置保留
+    ok(Math.abs(raw.dc - 4000) < 120, `raw 保留直流偏置 ${raw.dc.toFixed(0)}（输入 4000）`);
+    // hp：直流被高通滤掉，交流基本保留
+    ok(Math.abs(hp.dc) < 400, `hp 去掉直流 ${hp.dc.toFixed(0)}`);
+    ok(hp.rms > 3000, `hp 保留交流成分 RMS ${hp.rms.toFixed(0)}（输入 8000 正弦 RMS 应≈5657，高通首块有暂态）`);
+    ok(hp.len === BLK * 2, 'hp 输出长度正常');
+    // full：经过降噪（假引擎乘 0.25）+ 门控/AGC，与 hp 明显不同
+    ok(Math.abs(full.rms - hp.rms) > 100, `full 与 hp 明显不同（${full.rms.toFixed(0)} vs ${hp.rms.toFixed(0)}）`);
+    // 诊断与探针
+    const p2 = mk('hp');
+    dcRms(p2);
+    ok(p2.diagnostics().mode === 'hp', `诊断报告 mode=hp（${p2.diagnostics().mode}）`);
+    ok(p2.diagnostics().engine === 'df', 'hp 档引擎字段仍为 df（不是 bypass）');
+    ok(p2.probeReport().bypassed !== true, 'hp 档探针不标 bypassed（有处理可测）');
+    // setMode 切换
+    p2.setMode('raw');
+    ok(p2.mode === 'raw' && p2.bypass === true, 'setMode(raw) 生效且 bypass 同步');
+    p2.setMode('full');
+    ok(p2.mode === 'full' && p2.bypass === false, 'setMode(full) 生效且 bypass 同步');
+    ok(p2.setMode('bogus') === 'full', '非法档位被忽略');
+  }
+
   process.exit(fail ? 1 : 0);
 })().catch(e => { console.error(e); process.exit(1); });

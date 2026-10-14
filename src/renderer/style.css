@@ -420,6 +420,20 @@ details.panel.fold > .btn-row:last-child { padding-bottom: 0; }
   font-size: 12px; color: var(--text); cursor: pointer; white-space: nowrap;
 }
 .primary-btn.sm { padding: 6px 14px; font-size: 12px; }
+/* 三档处理切换：比复选框更能表达「三选一」的语义 */
+.mode-tabs { display: flex; gap: 6px; margin-bottom: 9px; }
+.mode-tab {
+  flex: 1; cursor: pointer; text-align: center; font-size: 12px;
+  color: var(--muted); background: rgba(0, 0, 0, .2);
+  border: 1px solid var(--line); border-radius: 9px; padding: 8px 10px;
+  transition: all .18s var(--ease);
+}
+.mode-tab i { display: block; font-style: normal; font-size: 10px; opacity: .7; margin-top: 2px; }
+.mode-tab:hover { color: var(--text); border-color: rgba(79, 140, 255, .5); }
+.mode-tab.on {
+  color: var(--accent); border-color: rgba(79, 140, 255, .6);
+  background: rgba(79, 140, 255, .14); box-shadow: 0 0 12px rgba(79, 140, 255, .18);
+}
 
 /* 图表：canvas + 图例合成一个容器，不再各自带边框 */
 .qc-tabs { display: flex; gap: 4px; margin-bottom: 9px; }

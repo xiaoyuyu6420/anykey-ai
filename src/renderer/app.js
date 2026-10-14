@@ -1137,18 +1137,28 @@ function initTunePanel() {
   syncInputs();
   elDiag.checked = !!state.settings.micDiag;
 
-  // ---- 原始音频旁路：一键跳过全部 DSP，听键盘麦原声做基准对比 ----
-  const elBypass = document.getElementById('opt-bypass');
-  if (elBypass) {
-    elBypass.checked = state.settings.micBypass === true;
-    elBypass.onchange = async () => {
-      state.settings.micBypass = elBypass.checked;
-      await window.aikey.setSettings({ micBypass: elBypass.checked });
-      toast(elBypass.checked
-        ? '已切到原始音频——现在听到的是键盘麦原声'
-        : '已开启降噪与增强链');
+  // ---- 处理档位：raw（全跳过）/ hp（只去低频）/ full（完整链）----
+  const MODE_HINT = {
+    raw: '已切到「原始」——键盘麦原声，全部处理跳过',
+    hp: '已切到「只去低频」——去掉 100Hz 以下的轰鸣，不做降噪与增益。若「刺」消失说明来自低频',
+    full: '已切到「完整处理」——降噪 + 稳态谱减 + 增益 + 门控全开',
+  };
+  const modeTabs = Array.from(document.querySelectorAll('.mode-tab'));
+  const paintMode = () => {
+    const cur = state.settings.micMode || (state.settings.micBypass ? 'raw' : 'full');
+    for (const t of modeTabs) t.classList.toggle('on', t.dataset.mode === cur);
+  };
+  for (const t of modeTabs) {
+    t.onclick = async () => {
+      const m = t.dataset.mode;
+      state.settings.micMode = m;
+      state.settings.micBypass = m === 'raw';
+      await window.aikey.setSettings({ micMode: m });
+      paintMode();
+      toast(MODE_HINT[m] || m);
     };
   }
+  paintMode();
 
   const applyTune = async (tune, note) => {
     Object.assign(cur, tune);

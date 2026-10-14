@@ -96,8 +96,14 @@ class MicPipeline {
       agcMaxGain: opts.agcMaxGain ?? 32,
     };
 
-    // 原始音频旁路：跳过全部 DSP（听原始声音做基准对比用）
-    this.bypass = opts.bypass === true;
+    // 处理档位（v0.13.2）：
+    //   raw  —— 全跳过，键盘麦原样（听原始做基准）
+    //   hp   —— 只开 4 阶 100Hz 高通。实测底噪 38% 能量在 200Hz 以下，
+    //           这部分低频轰鸣除了「闷」，还会让廉价耳机/音箱产生非线性失真
+    //           而听感「刺」——所以「只去低频」是一个独立且低风险的档位
+    //   full —— 完整处理链（高通+降噪+谱减+门控+AGC+压缩+限幅）
+    this.mode = opts.mode || (opts.bypass === true ? 'raw' : 'full');
+    this.bypass = this.mode === 'raw';
 
     // ---- 输入真采样率转换（v0.13.1）----
     // 键盘实际输出约 17129Hz（实测），代码原按 16000Hz 处理 → 声音降调 7%。
@@ -247,8 +253,9 @@ class MicPipeline {
   // 链路体检快照：给设置页/日志/调参器看的实时指标
   diagnostics() {
     return {
-      engine: this.bypass ? 'bypass' : (this.engine || 'none'),
+      engine: this.mode === 'raw' ? 'bypass' : (this.engine || 'none'),
       bypass: !!this.bypass,
+      mode: this.mode,
       inRate: this.inRate,
       resampling: !!this.rc,
       snrDb: Math.round(this.snrDb * 10) / 10,
@@ -318,13 +325,24 @@ class MicPipeline {
   }
 
   processBlock(blk) {
-    // 0) 原始直出（旁路全部处理）：只做 float→int16，不加高通/降噪/谱减/门控/AGC/压缩/限幅。
+    // 0) 原始直出（跳过全部处理）：只做 float→int16，不加高通/降噪/谱减/门控/AGC/压缩/限幅。
     // 用途是「听原始音频」做基准对比——判断这套算法到底有没有帮上忙。
     // 关键：这里必须真的什么都不做，任何一处「顺手修一下」都会让对比失去意义。
-    if (this.bypass) return this._passthrough(blk);
+    if (this.mode === 'raw') return this._passthrough(blk);
 
-    // 1) 陡高通（16k 域）
+    // 1) 陡高通（16k 域）—— raw 之外的所有档位都要（hp 档就到此为止）
     for (let i = 0; i < BLOCK; i++) blk[i] = this.hp2.process(this.hp1.process(blk[i]));
+
+    // hp 档：只去低频轰鸣，不做降噪/增益/门控。用来验证「刺」是否来自低频
+    if (this.mode === 'hp') {
+      const buf = Buffer.alloc(BLOCK * 2);
+      for (let i = 0; i < BLOCK; i++) {
+        let v = blk[i];
+        if (v > 32767) v = 32767; else if (v < -32768) v = -32768;
+        buf.writeInt16LE(Math.round(v), i * 2);
+      }
+      return buf;
+    }
 
     // 1.5) 引擎此前抛异常被旁路：冷却期到后自动重试恢复（用户补齐 dll/模型也生效）
     if (!this.engine && this.denoiseWanted && this._denoiseRetryAt && Date.now() >= this._denoiseRetryAt) {
@@ -384,19 +402,25 @@ class MicPipeline {
     return buf;
   }
 
-  // 运行时切换「原始音频」旁路
-  setBypass(on) {
-    this.bypass = on !== false;
-    if (this.bypass) {
+  // 运行时切换处理档位（raw / hp / full）
+  setMode(mode) {
+    if (!['raw', 'hp', 'full'].includes(mode)) return this.mode;
+    this.mode = mode;
+    this.bypass = mode === 'raw';
+    {
       // 复位状态机，避免切回来时残留旧的门控/增益/滤波状态造成突变
       this.gate = 1; this.gain = 1; this.compEnv = 0; this.vad = 0;
       this.hp1 = new Biquad(highpassCoeffs(16000, 100));
       this.hp2 = new Biquad(highpassCoeffs(16000, 100));
       this.noiseFloor = 150;
+      this.noiseSub && this.noiseSub.reset();
       this.resetProbe();
     }
-    return this.bypass;
+    return this.mode;
   }
+
+  // 兼容旧接口
+  setBypass(on) { return this.setMode(on !== false ? 'raw' : 'full'); }
 
   // 重置探针统计。调参器每试一档参数前调用——否则读到的是历史累积值，
   // 分不清「这一档的效果」和「之前所有档位的平均」
@@ -409,7 +433,7 @@ class MicPipeline {
   probeReport() {
     // 旁路模式下所有 DSP 都跳过，探针不再更新——必须明确说明，
     // 否则面板会一直显示旁路前的旧数字，误导判断
-    if (this.bypass) {
+    if (this.mode === 'raw') {
       return {
         bypassed: true,
         silence: { pre: 0, post: 0, cutDb: 0, samples: 0 },

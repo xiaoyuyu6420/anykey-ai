@@ -339,7 +339,7 @@ function boot() {
 
   // 音频管线预热：降噪引擎异步初始化（未就绪期自动旁路，其余 DSP 照常）
   micPipeline = new MicPipeline({
-    bypass: cfg.settings.micBypass === true,
+    mode: cfg.settings.micMode || (cfg.settings.micBypass === true ? 'raw' : 'full'),
     inRate: cfg.settings.micInputRate,
     denoise: cfg.settings.denoiseEnabled !== false,
     noiseSubtract: cfg.settings.noiseSubtractEnabled !== false,
@@ -352,7 +352,8 @@ function boot() {
   }
   micPipeline.initDenoiser().then(engine => {
     if (engine === 'df') console.log('[mic] DeepFilterNet3 降噪已就绪 attenLim=' + (cfg.settings.micTune || {}).attenLimDb + 'dB');
-    if (cfg.settings.micBypass === true) console.log('[mic] 原始音频旁路已开启——全部 DSP 跳过，输出为键盘麦原样声音');
+    const mm = micPipeline.mode;
+    console.log('[mic] 处理档位:', mm === 'raw' ? 'raw（全跳过，键盘麦原声）' : mm === 'hp' ? 'hp（只去低频轰鸣）' : 'full（完整处理链）');
     const ir = Number(cfg.settings.micInputRate) || 17129;
     if (Math.abs(ir - 16000) > 1) console.log(`[mic] 输入采样率转换 ${ir}Hz → 16000Hz（修正降调 7%，旁路模式下同样生效）`);
     else if (engine === 'rnnoise') console.log('[mic] RNNoise 降噪已就绪（DFN3 回退）');
@@ -1075,8 +1076,9 @@ ipcMain.handle('set-settings', (_e, settings) => {
   cfg.settings = { ...cfg.settings, ...settings };
   config.save(cfg);
   if ('autostart' in settings) setAutostart(settings.autostart);
-  // 原始音频旁路：即时生效
-  if ('micBypass' in settings && micPipeline) micPipeline.setBypass(settings.micBypass === true);
+  // 处理档位：即时生效（raw / hp / full）
+  if ('micMode' in settings && micPipeline) micPipeline.setMode(settings.micMode);
+  else if ('micBypass' in settings && micPipeline) micPipeline.setBypass(settings.micBypass === true);
   // 降噪开关：即时生效（旁路/恢复引擎），无需重启
   if ('denoiseEnabled' in settings && micPipeline) micPipeline.setDenoise(settings.denoiseEnabled !== false);
   // DSP 调参（远距识别优化）：即时生效，attenLim 走 df_set_atten_lim 不重建引擎
