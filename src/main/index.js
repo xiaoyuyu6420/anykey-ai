@@ -19,7 +19,7 @@ const actions = require('./actions');
 const aiLayer = require('./ailayer');
 const kbdInject = require('./kbd-inject');
 const config = require('./config');
-const { REMOTE_SAFE_KEY, REMOTE_SAFE_VK, passKeyNameOf } = require('./pt-alias');
+const { REMOTE_SAFE_KEY, REMOTE_SAFE_VK, passKeyNameOf, aliasKeyOf } = require('./pt-alias');
 
 let tray = null;
 let win = null;
@@ -618,9 +618,15 @@ function micPassModOf(keyId) {
   return (cfg.settings.micTriggerKeys || []).includes(keyId) ? m : null;
 }
 
-// 远控防串键：决策逻辑在 pt-alias.js（纯函数，单测覆盖）。
+// 透传主键名决策（逻辑都在 pt-alias.js 纯函数里，单测覆盖）：
+//   ① 远控防串键：整组语音键改发 F13（冷门键码，不串远端配置）
+//   ② 借用键：AI 键/PrtSc 这类没有系统键码的触发键，改发触发键里第一个正常键
+//      （如 F10）——它们自身注入不出去，不借就永远唤不醒输入法
 function passKeyName(keyId) {
-  return passKeyNameOf(cfg.settings, keyId, process.platform === 'win32');
+  const isWin = process.platform === 'win32';
+  const safe = passKeyNameOf(cfg.settings, keyId, isWin);
+  if (safe !== keyId) return safe;
+  return isWin ? aliasKeyOf(cfg.settings, keyId, actions.vkOf) : keyId;
 }
 
 // 远控探针：F13 down 注入后短窗轮询异步键状态。LL 钩子吞掉的事件不会更新
@@ -664,16 +670,24 @@ function doPassDown(keyId, flags, pass) {
   const mod = micPassModOf(keyId);
   ptDecision.set(keyId, false);
   if (!pass) { console.log(`[kdbg2] ${keyId} doPassDown 跳过（pass=false）`); return; }
+  const sent = passKeyName(keyId);
+  // 合成键（AI 键借说话键 / 远控防串键改发 F13）不可重复发：同一个键已被别的触发键
+  // 按着时再按一次，会让那次抬起被别人先触发 —— 微信会以为语音结束（说话中途断掉）
+  if (sent !== keyId && [...ptDecision.values()].some(v => v === sent)) {
+    console.log(`[kdbg2] ${keyId} 合成键 ${sent} 跳过：该键已被其它触发键按住`);
+    return;
+  }
   if (mod) {
     const okMod = actions.postRawKey(mod, true, 0);
     console.log(`[kdbg2] ${keyId} 修饰键 ${mod} down → ${okMod}`);
   }
-  const sent = passKeyName(keyId);
   const ok = actions.postRawKey(sent, true, flags);
   console.log(`[kdbg2] ${keyId} 主键 ${sent} down → ${ok}`);
   if (ok) {
     ptDecision.set(keyId, sent);
-    if (sent !== keyId) armRemoteProbe();
+    // 远控探针只针对「改发 F13」这一种改写（它探的就是 F13 有没有在本地落地）；
+    // AI 键借说话键发组合是常规改写，不该触发探针（否则会误报「被远控接管」）
+    if (sent === REMOTE_SAFE_KEY && sent !== keyId) armRemoteProbe();
   } else if (mod) {
     actions.postRawKey(mod, false, 0); // 主键发失败：修饰立即回收，不留卡键
   }

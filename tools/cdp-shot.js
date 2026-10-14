@@ -25,7 +25,9 @@ const fs = require('fs');
   });
 
   const height = Number(process.env.SHOT_H) || 0;
-  if (width || height) {
+  // SHOT_VIEWPORT=1：按真实窗口视口截图（不设任何 Emulation 覆盖，最安全）
+  const viewportOnly = process.env.SHOT_VIEWPORT === '1';
+  if (!viewportOnly && (width || height)) {
     await send('Emulation.setDeviceMetricsOverride', {
       width: width || 1280, height: height || 1200, deviceScaleFactor: 1, mobile: false,
     });
@@ -41,10 +43,12 @@ const fs = require('fs');
   }
   // SHOT_SCROLL=<px>：先滚动到指定位置（视口截图，文字才够大）
   const scroll = Number(process.env.SHOT_SCROLL) || 0;
-  await send('Runtime.evaluate', { expression: `window.scrollTo(0, ${scroll})` });
+  if (!viewportOnly) await send('Runtime.evaluate', { expression: `window.scrollTo(0, ${scroll})` });
   const r = await send('Page.captureScreenshot', {
-    format: 'png', captureBeyondViewport: !height && !scroll,
+    format: 'png', captureBeyondViewport: !viewportOnly && !height && !scroll,
   });
+  // 视口覆盖是持久的（不清掉，真实窗口会一直按截图用的尺寸渲染 —— 表现是页面下部留白）
+  await send('Emulation.clearDeviceMetricsOverride');
   if (!r.result || !r.result.data) { console.error('截图失败', JSON.stringify(r).slice(0, 300)); process.exit(1); }
   fs.writeFileSync(out, Buffer.from(r.result.data, 'base64'));
   console.log('已保存', out);
