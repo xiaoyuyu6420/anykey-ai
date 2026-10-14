@@ -91,18 +91,24 @@ global.AudioWorkletNode = function () {};
   console.log('[V3] 判决逻辑');
   {
     const vd = panel.verdictEl;
-    panel._verdict({ engine: 'df', snrDb: 18, gain: 2.5, level: 3000, noiseFloor: 150 });
+    const M = extra => Object.assign({ mode: 'full', engine: 'df', snrDb: 18, gain: 2.5, level: 3000, noiseFloor: 150 }, extra);
+    panel._verdict(M({}));
     ok(vd.className.includes('ok') && vd.textContent === '链路正常', `全好 → 链路正常（${vd.textContent}）`);
-    panel._verdict({ engine: 'none', snrDb: 18, gain: 2.5, level: 3000, noiseFloor: 150 });
-    ok(vd.textContent.includes('降噪未就绪'), `引擎 none → 提示降噪未就绪（${vd.textContent}）`);
-    panel._verdict({ engine: 'df', snrDb: 2, gain: 2.5, level: 3000, noiseFloor: 150 });
-    ok(vd.textContent.includes('SNR 偏低'), `SNR 2 → 提示偏低（${vd.textContent}）`);
-    panel._verdict({ engine: 'df', snrDb: 18, gain: 1.0, level: 4000, noiseFloor: 150 });
+    // 降噪相关的告警只在 full 档算问题——其它档本就不跑降噪，报这条是假警报
+    panel._verdict(M({ engine: 'none' }));
+    ok(vd.textContent.includes('降噪未就绪'), `full 档引擎 none → 提示降噪未就绪（${vd.textContent}）`);
+    panel._verdict(M({ snrDb: 2 }));
+    ok(vd.textContent.includes('SNR 偏低'), `full 档 SNR 2 → 提示偏低（${vd.textContent}）`);
+    for (const mode of ['raw', 'hp', 'speech']) {
+      panel._verdict(M({ mode, engine: 'none', snrDb: 0 }));
+    }
+    ok(vd.textContent === '链路正常', `非降噪档（raw/hp/speech）不报降噪告警（${vd.textContent}）`);
+    panel._verdict(M({ gain: 1.0, level: 4000 }));
     ok(vd.textContent.includes('增益未工作'), `增益 1.0 + 有电平 → 提示增益未工作（${vd.textContent}）`);
-    panel._verdict({ engine: 'df', snrDb: 18, gain: 3, level: 15000, noiseFloor: 150 });
+    panel._verdict(M({ gain: 3, level: 15000 }));
     ok(vd.textContent.includes('电平过高'), `电平 15000 → 提示过高（${vd.textContent}）`);
     panel._clipEvents = 10;
-    panel._verdict({ engine: 'df', snrDb: 18, gain: 3, level: 3000, noiseFloor: 150 });
+    panel._verdict(M({ gain: 3, level: 3000 }));
     ok(vd.textContent.includes('削波'), `削波计数 → 提示削波（${vd.textContent}）`);
   }
 

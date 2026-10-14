@@ -90,7 +90,13 @@ class QualityPanel {
     this._clipEvents = 0;
 
     this._bindTabs();
-    this._resize();
+    this.resize();
+    // 初始化时容器可能还没布局完（父级折叠/入场动画），此时 clientHeight=0，
+    // 尺寸会算错且之后不再更新——用 ResizeObserver 跟随容器尺寸变化
+    if (typeof ResizeObserver === 'function') {
+      this._ro = new ResizeObserver(() => this.resize());
+      this._ro.observe(this.canvas.parentElement || this.canvas);
+    }
     window.addEventListener('resize', () => this._resize());
     this._loop();
     this._pollMetrics();
@@ -111,7 +117,7 @@ class QualityPanel {
     }
   }
 
-  _resize() {
+  resize() {
     const dpr = window.devicePixelRatio || 1;
     const w = this.canvas.clientWidth || 600;
     const h = this.canvas.clientHeight || 132;
@@ -119,7 +125,9 @@ class QualityPanel {
     this.canvas.height = Math.max(1, Math.round(h * dpr));
     this.dpr = dpr;
     this.cw = w; this.ch = h;
+    this._draw();
   }
+  _resize() { this.resize(); }
 
   _setLegend() {
     if (!this.legend) return;
@@ -234,47 +242,46 @@ class QualityPanel {
     if (this.view === 'metric') this._draw();
   }
 
-  // 底噪诊断：把探针的「降噪前/后/压制/信噪比提升」摆出来，替用户下结论。
-  // 关键指标是「信噪比提升」——降噪量好看但人声被一起压掉等于白压（实测教训）
+  // 诊断四格：随档位切换口径，保证每一格对当前档位都有意义。
+  //   降噪档（full）→ 末格看「信噪比提升」（降噪有没有用）
+  //   非降噪档       → 末格看「链路信噪比」（这条链路够不够用）
+  // 不合口径的格子显示占位而不是 0，否则「提升 0dB」会被误读成坏了。
   _renderDiag(d) {
     const p = d.probe;
-    const el = (id) => document.getElementById(id);
-    const vEl = el('diag-verdict'), advEl = el('diag-advice');
-    const preEl = el('diag-pre'), postEl = el('diag-post');
-    const cutEl = el('diag-cut'), snrEl = el('diag-snr');
-    if (!p || !vEl || !preEl || !postEl || !cutEl || !snrEl || !advEl) return;
-    // 折叠标题上的徽章：收起时也能看到状态，不必展开
-    const sumEl = el('diag-sum-verdict');
-    const paintSum = cls => {
-      if (!sumEl) return;
-      sumEl.textContent = p.verdict;
-      sumEl.className = 'sum-badge ' + cls;
-    };
-    const s = p.silence;
-    if (p.bypassed) {
-      // 旁路模式：三格数字无意义（没有处理可测），显示占位而非旧值
-      preEl.innerHTML = '–';
-      postEl.innerHTML = '–';
-      cutEl.innerHTML = '–';
-      snrEl.innerHTML = '<span style="color:var(--warn)">原始</span>';
-      vEl.textContent = p.verdict;
-      vEl.className = 'qc-verdict warn';
-      advEl.textContent = p.advice;
-      paintSum('warn');
-      return;
+    const el = id => document.getElementById(id);
+    const advEl = el('diag-advice');
+    const spEl = el('diag-speech'), nzEl = el('diag-noise'), cutEl = el('diag-cut'), snrEl = el('diag-snr');
+    if (!p || !spEl || !nzEl || !cutEl || !snrEl || !advEl) return;
+
+    const isDenoise = d.mode === 'full';
+    const keyLabel = el('diag-key-label');
+    if (keyLabel) keyLabel.textContent = isDenoise ? '信噪比提升' : '链路信噪比';
+
+    if (p.bypassed && d.mode === 'raw') {
+      // 原始档也采数（探针在全档位生效）——只是不做处理，四格照常显示
     }
-    preEl.innerHTML = `${s.pre}<small>RMS</small>`;
-    postEl.innerHTML = `${s.post}<small>RMS</small>`;
-    cutEl.innerHTML = `${s.cutDb}<small>dB</small>`;
-    const g = p.snrGainDb;
-    snrEl.innerHTML = `<span style="color:${g >= 6 ? 'var(--ok)' : g >= 2 ? 'var(--warn)' : 'var(--err)'}">${g > 0 ? '+' : ''}${g}<small>dB</small></span>`;
-    const cls = p.verdict === '信噪比显著改善' ? 'ok'
-      : p.verdict === '信噪比略有改善' ? 'warn'
-        : p.verdict === '信噪比几乎没改善' ? 'err' : '';
-    vEl.textContent = p.verdict;
-    vEl.className = 'qc-verdict ' + cls;
-    advEl.textContent = p.advice;
-    paintSum(cls);
+    const s = p.silence, v = p.speech;
+    if (!s.samples && !v.samples) {
+      spEl.innerHTML = '–'; nzEl.innerHTML = '–'; cutEl.innerHTML = '–'; snrEl.innerHTML = '–';
+    } else {
+      spEl.innerHTML = `${v.pre}<small>RMS</small>`;
+      nzEl.innerHTML = `${s.post}<small>RMS</small>`;
+      cutEl.innerHTML = isDenoise ? `${s.cutDb}<small>dB</small>` : `<span style="color:var(--muted)">不适用</span>`;
+      if (isDenoise) {
+        const g = p.snrGainDb;
+        snrEl.innerHTML = `<span style="color:${g >= 6 ? 'var(--ok)' : g >= 2 ? 'var(--warn)' : 'var(--err)'}">${g > 0 ? '+' : ''}${g}<small>dB</small></span>`;
+      } else {
+        const l = p.inSnrDb;
+        snrEl.innerHTML = `<span style="color:${l >= 15 ? 'var(--ok)' : l >= 8 ? 'var(--warn)' : 'var(--err)'}">${l}<small>dB</small></span>`;
+      }
+    }
+    advEl.textContent = p.advice || '';
+    // 判读结论同时写到面板头的徽章上
+    const vEl = this.verdictEl;
+    if (vEl && p.verdict && p.verdict !== '采样中') {
+      const cls = /良好|显著/.test(p.verdict) ? 'ok' : /一般|略|保守/.test(p.verdict) ? 'warn' : 'err';
+      vEl.className = 'qc-verdict ' + cls;
+    }
   }
 
   _spark(id, arr, min, max) {
@@ -305,8 +312,11 @@ class QualityPanel {
   _verdict(d) {
     if (!this.verdictEl) return;
     const problems = [];
-    if (d.engine === 'none') problems.push('降噪未就绪');
-    if (d.snrDb > 0 && d.snrDb < 5) problems.push('SNR 偏低');
+    // 「降噪未就绪」只在真正需要降噪的档位才算问题。
+    // raw/hp/speech 档本就不跑降噪，报这一条是假警报（会让人以为坏了）。
+    const usesDenoise = d.mode === 'full';
+    if (usesDenoise && d.engine === 'none') problems.push('降噪未就绪');
+    if (usesDenoise && d.snrDb > 0 && d.snrDb < 5) problems.push('SNR 偏低');
     if (d.gain <= 1.05 && d.level > 200) problems.push('增益未工作');
     if (d.level > 12000) problems.push('电平过高');
     if (this._clipEvents > 3) problems.push('削波');
@@ -349,9 +359,16 @@ class QualityPanel {
     g.beginPath(); g.moveTo(0, mid); g.lineTo(w, mid); g.stroke();
 
     if (!this.filled) {
-      g.fillStyle = 'rgba(138,147,168,.7)';
-      g.font = '11px "Segoe UI", sans-serif';
-      g.fillText('等待音频…按住开麦键说话', 10, mid + 4);
+      // 空状态要显眼：画布大半时间是空的（只有按住说话键才有数据），
+      // 太淡会被当成「面板坏了」——这正是用户反馈过的问题。
+      g.textAlign = 'center';
+      g.fillStyle = 'rgba(138,147,168,.85)';
+      g.font = '13px "Segoe UI", "Microsoft YaHei", sans-serif';
+      g.fillText('按住说话键，这里会显示实时波形', w / 2, mid - 6);
+      g.font = '11px "Segoe UI", "Microsoft YaHei", sans-serif';
+      g.fillStyle = 'rgba(138,147,168,.55)';
+      g.fillText('松开按键即停止采集，无需担心一直录', w / 2, mid + 14);
+      g.textAlign = 'start';
       return;
     }
 
@@ -410,8 +427,11 @@ class QualityPanel {
     let maxDb = -100;
     for (let i = 1; i < N; i++) if (this.specSmooth[i] > maxDb) maxDb = this.specSmooth[i];
     if (maxDb < -99) {
-      g.fillStyle = 'rgba(138,147,168,.7)';
-      g.fillText('等待音频…', 10, h / 2);
+      g.textAlign = 'center';
+      g.fillStyle = 'rgba(138,147,168,.85)';
+      g.font = '13px "Segoe UI", "Microsoft YaHei", sans-serif';
+      g.fillText('按住说话键，这里会显示实时频谱', w / 2, h / 2);
+      g.textAlign = 'start';
       return;
     }
     // 纵轴固定为 dBFS：顶 0dB、底 -80dB（低于 -80 基本是静音，抬高只会压缩动态范围）
@@ -446,8 +466,12 @@ class QualityPanel {
 
 let qualityPanel = null;
 function initQualityPanel() {
-  if (!document.getElementById('qc-panel')) return;
+  // 守卫必须看「画布」而不是某个容器 id —— 曾用 qc-panel 这个 id 做守卫，
+  // 后来重构 HTML 时该 id 被删掉，导致整个面板静默不初始化、画布永远是空的
+  // （HTML 默认 300×150，且从不重绘）。守卫条件要盯住真正必需的节点。
+  if (!document.getElementById('qc-canvas')) return;
   qualityPanel = new QualityPanel();
+  qualityPanel.resize();       // 显式再算一次尺寸：初始化时容器可能还没有布局高度
   return qualityPanel;
 }
 

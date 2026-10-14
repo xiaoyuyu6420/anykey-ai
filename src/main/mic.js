@@ -363,7 +363,17 @@ class MicPipeline {
     // 0) 原始直出（跳过全部处理）：只做 float→int16，不加高通/降噪/谱减/门控/AGC/压缩/限幅。
     // 用途是「听原始音频」做基准对比——判断这套算法到底有没有帮上忙。
     // 关键：这里必须真的什么都不做，任何一处「顺手修一下」都会让对比失去意义。
-    if (this.mode === 'raw') return this._passthrough(blk);
+    if (this.mode === 'raw') {
+      // 但诊断不能跟着哑掉：面板要能显示电平/信噪比才能判断链路是否正常。
+      // 这些只是**测量**，不改变一个样本的输出（原始档的透明性由单测守着）。
+      const pre = rmsOf(blk, BLOCK);
+      if (this._probeOn) {
+        this.level = this.level * 0.7 + pre * 0.3;
+        this._trackNoiseFloor(pre);
+        this._updateProbe(pre, pre);   // 未处理：前后相同，snrGain 自然为 0
+      }
+      return this._passthrough(blk);
+    }
 
     // 1) 陡高通（16k 域）—— raw 之外的所有档位都要（hp 档就到此为止）
     for (let i = 0; i < BLOCK; i++) blk[i] = this.hp2.process(this.hp1.process(blk[i]));
@@ -373,7 +383,14 @@ class MicPipeline {
     // 也能采到数据——否则只有 full 档能测信噪比，无法横向对比（踩过）。
     const preHpRms = this._probeOn ? rmsOf(blk, BLOCK) : 0;
     const probeAnd = (buf) => {
-      if (this._probeOn) this._updateProbe(preHpRms, rmsOf(blk, BLOCK));
+      if (this._probeOn) {
+        const post = rmsOf(blk, BLOCK);
+        // 输出电平也要在这里更新：原实现只在 _gateAgc 里算，而 hp/speech 档
+        // 不经过门控/AGC，导致面板「输出电平」恒为 0（看着像坏了）
+        this.level = this.level * 0.7 + post * 0.3;
+        this._trackNoiseFloor(preHpRms);
+        this._updateProbe(preHpRms, post);
+      }
       return buf;
     };
 
@@ -435,6 +452,17 @@ class MicPipeline {
 
     // 3) VAD 门控 + AGC + 压缩器 + 软限幅（16k 域逐样本状态机，块间无缝）
     return this._gateAgc(blk);
+  }
+
+  // 底噪跟踪（所有档位共用）。
+  // 原实现只在 _gateAgc（full 档）里收敛，导致 hp/speech/raw 档的 noiseFloor
+  // 永远停在默认 150 —— 而实测该麦真实底噪约 70~90，于是「语音判定阈值
+  // = 底噪×3 = 450」把大量真实语音误判成静音：面板判读卡在「采样中」、
+  // 语音桶始终凑不满样本。底噪是链路属性，与处理档位无关，必须一直跟。
+  _trackNoiseFloor(rms) {
+    if (rms > 5 && rms < this.noiseFloor * 1.5) {
+      this.noiseFloor += (rms - this.noiseFloor) * 0.02;
+    }
   }
 
   // 降噪前后对比的滑动统计。分开累计「语音段」和「静音段」——
@@ -583,10 +611,29 @@ class MicPipeline {
     const snrGainDb = Math.round((outSnr - inSnr) * 10) / 10;
     const r1 = x => Math.round(x * 10) / 10;
 
-    // 判读依据：SNR 提升（≥6dB 显著，2~6dB 有限，<2dB 基本没用）
+    // 判读分两种口径：
+    //   降噪档（full）→ 看「信噪比提升」，回答「降噪有没有用」
+    //   非降噪档（raw/hp/speech）→ 看「链路信噪比」本身，回答「这条链路够不够用」
+    // 统一用一个口径会误导：speech 档本就不降噪，报「提升 0dB」会让人以为坏了。
     let verdict = '采样中';
     let advice = '按住开麦键说几句话，再静音几秒，面板会自动采样并给出判读。';
-    if (s.m > 20 && v.n > 20 && s.pre > 0 && v.pre > 0) {
+    if (s.m > 20 && v.n > 20 && s.pre > 0 && v.pre > 0 && this.mode !== 'full') {
+      const link = r1(inSnr);
+      const cut = db(s.pre, s.post);
+      if (link >= 15) {
+        verdict = '链路信噪比良好';
+        advice = `当前档位「${this.mode === 'raw' ? '原始' : this.mode === 'hp' ? '只去低频' : '语音增强'}」不做降噪，` +
+          `这里测的是链路本身：人声比底噪高 ${link}dB，底噪 ${silPost}。这个水平识别引擎能正常工作。`;
+      } else if (link >= 8) {
+        verdict = '链路信噪比一般';
+        advice = `人声比底噪高 ${link}dB（底噪 ${silPost}）。识别通常可用；环境变吵或离远时可能掉字，靠近一点最有效。`;
+      } else {
+        verdict = '链路信噪比偏弱';
+        advice = `人声只比底噪高 ${link}dB（底噪 ${silPost}）——这是麦克风拾音的限制，软件补不回来。` +
+          `建议靠近说话，或改用蓝牙连接（实测蓝牙链路质量更好）。`;
+      }
+      if (cut > 3) advice += ` 当前档位顺带把底噪压了 ${cut}dB（去低频轰鸣的附带效果）。`;
+    } else if (s.m > 20 && v.n > 20 && s.pre > 0 && v.pre > 0) {
       const cut = db(s.pre, s.post);
       if (snrGainDb >= 6) {
         verdict = '信噪比显著改善';
@@ -665,7 +712,7 @@ class MicPipeline {
       ? this.vad > 0.55 || rms > this.noiseFloor * T.gateOpenMul
       : rms > this.noiseFloor * T.gateOpenMul;
 
-    // 底噪跟踪：只在非语音段收敛
+    // 底噪跟踪：只在非语音段收敛（full 档判定更准，仍用这个更保守的规则）
     if (!speech && rms > 20) this.noiseFloor += (rms - this.noiseFloor) * 0.03;
 
     // 门控：语音开、静音压到 -26dB；attack 快 release 慢不切字头尾
