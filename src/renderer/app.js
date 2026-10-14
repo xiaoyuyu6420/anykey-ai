@@ -1131,6 +1131,19 @@ function initTunePanel() {
   syncInputs();
   elDiag.checked = !!state.settings.micDiag;
 
+  // ---- 原始音频旁路：一键跳过全部 DSP，听键盘麦原声做基准对比 ----
+  const elBypass = document.getElementById('opt-bypass');
+  if (elBypass) {
+    elBypass.checked = state.settings.micBypass === true;
+    elBypass.onchange = async () => {
+      state.settings.micBypass = elBypass.checked;
+      await window.aikey.setSettings({ micBypass: elBypass.checked });
+      toast(elBypass.checked
+        ? '已切到原始音频——现在听到的是键盘麦原声'
+        : '已开启降噪与增强链');
+    };
+  }
+
   const applyTune = async (tune, note) => {
     Object.assign(cur, tune);
     state.settings.micTune = { ...cur };

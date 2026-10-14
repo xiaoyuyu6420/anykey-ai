@@ -441,6 +441,14 @@ label.pass-line { display: flex; align-items: center; gap: 6px; color: var(--mut
   color: var(--accent); border-color: rgba(79, 140, 255, .6);
   background: rgba(79, 140, 255, .12);
 }
+/* 原始音频旁路：当前的主功能，给它独立的高亮容器 */
+.bypass-row {
+  display: flex; align-items: flex-start; gap: 10px; flex-wrap: wrap;
+  border: 1px solid rgba(255, 178, 36, .3); border-radius: var(--radius);
+  background: rgba(255, 178, 36, .07); padding: 9px 12px; margin-bottom: 10px;
+}
+.bypass-row label { font-size: 13px; white-space: nowrap; }
+.bypass-row .sub { flex: 1 1 260px; }
 #mic-tune-box summary { font-size: 12px; color: var(--muted); cursor: pointer; padding: 4px 0; }
 #mic-tune-box summary:hover { color: var(--text); }
 

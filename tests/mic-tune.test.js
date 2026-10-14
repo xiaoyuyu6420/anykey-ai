@@ -133,6 +133,53 @@ function attachFakeDf(p, snr = 20) {
     ok(Object.keys(d.tune).length === 6, 'tune 快照是拷贝（改了不影响管线）');
   }
 
+  console.log('[T9] 原始音频旁路：必须逐样本不变');
+  {
+    const p = new MicPipeline({ bypass: true });
+    attachFakeDf(p, 0.25);
+    p.engine = 'df';
+    // 造一段有直流偏置 + 大动态的信号：任何高通/门控/AGC 都会改变它
+    const src = new Int16Array(BLOCK);
+    for (let i = 0; i < BLOCK; i++) src[i] = Math.round(3000 + 12000 * Math.sin(2 * Math.PI * 300 * i / 16000));
+    const out = p.feed(src, BLOCK);
+    ok(out.length === BLOCK * 2, `输出长度 ${out.length} 字节（期望 ${BLOCK * 2}）`);
+    let maxErr = 0;
+    for (let i = 0; i < BLOCK; i++) {
+      maxErr = Math.max(maxErr, Math.abs(out.readInt16LE(i * 2) - src[i]));
+    }
+    ok(maxErr === 0, `逐样本完全一致（最大偏差 ${maxErr}）——含直流偏置，证明高通也被跳过`);
+    ok(p.diagnostics().engine === 'bypass', '诊断报告 engine=bypass');
+    ok(p.diagnostics().bypass === true, '诊断报告 bypass=true');
+    ok(p.probeReport().verdict === '原始音频模式', `探针明确标注旁路（${p.probeReport().verdict}）`);
+    ok(p.probeReport().bypassed === true, '探针标记 bypassed');
+  }
+
+  console.log('[T10] 关掉旁路后处理链恢复、切回无残留');
+  {
+    const p = new MicPipeline({ bypass: true });
+    attachFakeDf(p, 0.25);
+    p.engine = 'df';
+    const mk = () => {
+      const a = new Int16Array(BLOCK);
+      for (let i = 0; i < BLOCK; i++) a[i] = Math.round(3000 + 12000 * Math.sin(2 * Math.PI * 300 * i / 16000));
+      return a;
+    };
+    const rmsOf = buf => { let s = 0; for (let i = 0; i < BLOCK; i++) { const v = buf.readInt16LE(i * 2); s += v * v; } return Math.sqrt(s / BLOCK); };
+    const bypassRms = rmsOf(p.feed(mk(), BLOCK));
+    p.setBypass(false);
+    const procRms = rmsOf(p.feed(mk(), BLOCK));
+    ok(p.bypass === false, 'setBypass(false) 生效');
+    ok(p.diagnostics().engine === 'df', `引擎恢复为 df（${p.diagnostics().engine}）`);
+    ok(Math.abs(bypassRms - procRms) > 1, `处理后与原声确实不同（${bypassRms.toFixed(0)} vs ${procRms.toFixed(0)}）`);
+    // 再切回旁路应仍是逐样本一致（状态机复位后不残留）
+    p.setBypass(true);
+    const back = p.feed(mk(), BLOCK);
+    const src = mk();
+    let maxErr = 0;
+    for (let i = 0; i < BLOCK; i++) maxErr = Math.max(maxErr, Math.abs(back.readInt16LE(i * 2) - src[i]));
+    ok(maxErr === 0, `切回旁路仍逐样本一致（最大偏差 ${maxErr}）——复位无残留`);
+  }
+
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })().catch(e => { console.error(e); process.exit(1); });

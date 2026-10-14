@@ -244,6 +244,17 @@ class QualityPanel {
     const cutEl = el('diag-cut'), snrEl = el('diag-snr');
     if (!p || !vEl || !preEl || !postEl || !cutEl || !snrEl || !advEl) return;
     const s = p.silence;
+    if (p.bypassed) {
+      // 旁路模式：三格数字无意义（没有处理可测），显示占位而非旧值
+      preEl.innerHTML = '–';
+      postEl.innerHTML = '–';
+      cutEl.innerHTML = '–';
+      snrEl.innerHTML = '<span style="color:var(--warn)">原始</span>';
+      vEl.textContent = p.verdict;
+      vEl.className = 'qc-verdict warn';
+      advEl.textContent = p.advice;
+      return;
+    }
     preEl.innerHTML = `${s.pre}<small>RMS</small>`;
     postEl.innerHTML = `${s.post}<small>RMS</small>`;
     cutEl.innerHTML = `${s.cutDb}<small>dB</small>`;

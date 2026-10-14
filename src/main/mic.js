@@ -95,6 +95,9 @@ class MicPipeline {
       agcMaxGain: opts.agcMaxGain ?? 32,
     };
 
+    // 原始音频旁路：跳过全部 DSP（听原始声音做基准对比用）
+    this.bypass = opts.bypass === true;
+
     this.hp1 = new Biquad(highpassCoeffs(16000, 100));
     this.hp2 = new Biquad(highpassCoeffs(16000, 100));
     // 降噪引擎：DFN3 主力，RNNoise 兜底（dll/模型缺失时自动降级）
@@ -236,7 +239,8 @@ class MicPipeline {
   // 链路体检快照：给设置页/日志/调参器看的实时指标
   diagnostics() {
     return {
-      engine: this.engine || 'none',
+      engine: this.bypass ? 'bypass' : (this.engine || 'none'),
+      bypass: !!this.bypass,
       snrDb: Math.round(this.snrDb * 10) / 10,
       vad: Math.round(this.vad * 100) / 100,
       noiseFloor: Math.round(this.noiseFloor),
@@ -297,6 +301,11 @@ class MicPipeline {
   }
 
   processBlock(blk) {
+    // 0) 原始直出（旁路全部处理）：只做 float→int16，不加高通/降噪/谱减/门控/AGC/压缩/限幅。
+    // 用途是「听原始音频」做基准对比——判断这套算法到底有没有帮上忙。
+    // 关键：这里必须真的什么都不做，任何一处「顺手修一下」都会让对比失去意义。
+    if (this.bypass) return this._passthrough(blk);
+
     // 1) 陡高通（16k 域）
     for (let i = 0; i < BLOCK; i++) blk[i] = this.hp2.process(this.hp1.process(blk[i]));
 
@@ -345,6 +354,33 @@ class MicPipeline {
     acc.post = acc.post === 0 ? post : acc.post * (1 - a) + post * a;
   }
 
+  // 原始直出：唯一的处理是 float→int16 的类型转换与溢出钳制。
+  // 不加任何滤波/增益/门控——听的就是键盘麦原样的声音。
+  _passthrough(blk) {
+    const buf = Buffer.alloc(BLOCK * 2);
+    for (let i = 0; i < BLOCK; i++) {
+      let v = blk[i];
+      if (!(v === v)) v = 0; // NaN 兜底（原始数据理论上不会有，防上游异常）
+      if (v > 32767) v = 32767; else if (v < -32768) v = -32768;
+      buf.writeInt16LE(Math.round(v), i * 2);
+    }
+    return buf;
+  }
+
+  // 运行时切换「原始音频」旁路
+  setBypass(on) {
+    this.bypass = on !== false;
+    if (this.bypass) {
+      // 复位状态机，避免切回来时残留旧的门控/增益/滤波状态造成突变
+      this.gate = 1; this.gain = 1; this.compEnv = 0; this.vad = 0;
+      this.hp1 = new Biquad(highpassCoeffs(16000, 100));
+      this.hp2 = new Biquad(highpassCoeffs(16000, 100));
+      this.noiseFloor = 150;
+      this.resetProbe();
+    }
+    return this.bypass;
+  }
+
   // 重置探针统计。调参器每试一档参数前调用——否则读到的是历史累积值，
   // 分不清「这一档的效果」和「之前所有档位的平均」
   resetProbe() {
@@ -354,6 +390,18 @@ class MicPipeline {
 
   // 探针读数 + 判读结论
   probeReport() {
+    // 旁路模式下所有 DSP 都跳过，探针不再更新——必须明确说明，
+    // 否则面板会一直显示旁路前的旧数字，误导判断
+    if (this.bypass) {
+      return {
+        bypassed: true,
+        silence: { pre: 0, post: 0, cutDb: 0, samples: 0 },
+        speech: { pre: 0, post: 0, cutDb: 0, samples: 0 },
+        inSnrDb: 0, outSnrDb: 0, snrGainDb: 0,
+        verdict: '原始音频模式',
+        advice: '全部降噪与增强已跳过，听到的就是键盘麦原声。用「录音测试」录一段，再关掉这个开关录一段，两个文件对比着听——原始更清楚就说明算法帮倒忙。',
+      };
+    }
     const s = this._probeSilence, v = this._probeSpeech;
     // pre/post 是 RMS（幅度量），幅度比转 dB 必须用 20·log10。
     // 用 10·log10 会把所有降噪量报成实际值的一半（12dB 显示成 6dB）。
