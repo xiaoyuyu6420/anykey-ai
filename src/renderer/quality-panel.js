@@ -243,6 +243,13 @@ class QualityPanel {
     const preEl = el('diag-pre'), postEl = el('diag-post');
     const cutEl = el('diag-cut'), snrEl = el('diag-snr');
     if (!p || !vEl || !preEl || !postEl || !cutEl || !snrEl || !advEl) return;
+    // 折叠标题上的徽章：收起时也能看到状态，不必展开
+    const sumEl = el('diag-sum-verdict');
+    const paintSum = cls => {
+      if (!sumEl) return;
+      sumEl.textContent = p.verdict;
+      sumEl.className = 'sum-badge ' + cls;
+    };
     const s = p.silence;
     if (p.bypassed) {
       // 旁路模式：三格数字无意义（没有处理可测），显示占位而非旧值
@@ -253,6 +260,7 @@ class QualityPanel {
       vEl.textContent = p.verdict;
       vEl.className = 'qc-verdict warn';
       advEl.textContent = p.advice;
+      paintSum('warn');
       return;
     }
     preEl.innerHTML = `${s.pre}<small>RMS</small>`;
@@ -260,13 +268,13 @@ class QualityPanel {
     cutEl.innerHTML = `${s.cutDb}<small>dB</small>`;
     const g = p.snrGainDb;
     snrEl.innerHTML = `<span style="color:${g >= 6 ? 'var(--ok)' : g >= 2 ? 'var(--warn)' : 'var(--err)'}">${g > 0 ? '+' : ''}${g}<small>dB</small></span>`;
+    const cls = p.verdict === '信噪比显著改善' ? 'ok'
+      : p.verdict === '信噪比略有改善' ? 'warn'
+        : p.verdict === '信噪比几乎没改善' ? 'err' : '';
     vEl.textContent = p.verdict;
-    vEl.className = 'qc-verdict ' + (
-      p.verdict === '信噪比显著改善' ? 'ok'
-        : p.verdict === '信噪比略有改善' ? 'warn'
-          : p.verdict === '信噪比几乎没改善' ? 'err' : ''
-    );
+    vEl.className = 'qc-verdict ' + cls;
     advEl.textContent = p.advice;
+    paintSum(cls);
   }
 
   _spark(id, arr, min, max) {

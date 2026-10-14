@@ -1111,12 +1111,18 @@ function initTunePanel() {
     labels.atten.textContent = elAtten.value + ' dB';
     labels.release.textContent = (elRel.value / 100).toFixed(2);
     labels.agc.textContent = elAgc.value;
-    labels.maxgain.textContent = elGain.value;
+    labels.maxgain.textContent = elGain.value + '×';
     labels.sens.textContent = (elSens.value / 10).toFixed(1) + '×';
   };
   const highlightPreset = () => {
     const key = matchPreset(cur);
     for (const b of presetBtns) b.classList.toggle('on', b.dataset.preset === key);
+    // 折叠标题上的徽章：收起时也能看出当前用哪套参数
+    const sumEl = document.getElementById('opt-sum-verdict');
+    if (sumEl) {
+      sumEl.textContent = key ? MIC_PRESETS[key].label : '自定义';
+      sumEl.className = 'sum-badge' + (key ? ' ok' : '');
+    }
     return key;
   };
   const syncInputs = () => {

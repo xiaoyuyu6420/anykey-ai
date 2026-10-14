@@ -25,6 +25,10 @@
 }
 
 * { box-sizing: border-box; }
+/* hidden 属性必须能压过组件自身的 display。
+   否则 .qc-metrics{display:grid} 这类作者样式会盖掉浏览器默认的
+   [hidden]{display:none}，元素明明标了 hidden 却照样显示（踩过一次）。 */
+[hidden] { display: none !important; }
 body {
   margin: 0;
   background: var(--bg);
@@ -349,38 +353,89 @@ label.pass-line { display: flex; align-items: center; gap: 6px; color: var(--mut
   transition: width .08s linear;
 }
 
-/* ---------- 音频质量可视化（v0.12.4） ----------
-   三个视图各回答一个问题：
-     波形   —— 有没有断音（空洞）/ 削波（贴顶）
-     指标带 —— AGC 有没有在工作、底噪高不高
-     频谱   —— 噪声集中在哪段频率，降噪有没有下压
-   画布用 devicePixelRatio 缩放，避免高分屏发虚。 */
-.qc { margin: 10px 0 4px; }
-.qc-head {
-  display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px;
+/* ---------- 麦克风面板（v0.13.0 重构）----------
+   设计原则：
+   1) 一套容器样式（.panel）走天下，靠 .accent / .fold 两个变体区分主次，
+      不再每种块各写一套边框背景（旧版是「盒子汤」的主要来源）
+   2) 层级=任务优先级：主任务常显，其余 </details> 折叠；折叠标题带徽章，
+      收起时也能看到状态
+   3) 说明文字统一 .panel-hint，不再混用 .sub / .qc-hint / 内联 span */
+
+.panel {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: rgba(8, 10, 15, .4);
+  padding: 11px 13px;
+  margin: 10px 0;
 }
-.qc-tabs { display: flex; gap: 4px; }
+.panel.accent {
+  border-color: rgba(79, 140, 255, .32);
+  background: linear-gradient(180deg, rgba(79, 140, 255, .09), rgba(79, 140, 255, .03));
+}
+.panel-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 8px; margin-bottom: 9px;
+}
+.panel-title { font-size: 12.5px; font-weight: 600; letter-spacing: .2px; }
+.panel-hint { font-size: 11px; color: var(--muted); margin: 7px 0 0; line-height: 1.65; }
+.panel-hint b { color: var(--text); font-weight: 600; }
+.panel-hint code {
+  background: rgba(255, 255, 255, .07); border-radius: 4px;
+  padding: 1px 5px; font-size: 10.5px;
+}
+
+/* 折叠区：标题行做成可点的条，右侧挂状态徽章 */
+details.panel.fold { padding: 0; overflow: hidden; }
+details.panel.fold > summary {
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 13px; cursor: pointer; list-style: none;
+  font-size: 12.5px; font-weight: 600; color: var(--muted);
+  transition: color .18s var(--ease), background .18s var(--ease);
+}
+details.panel.fold > summary::-webkit-details-marker { display: none; }
+details.panel.fold > summary::before {
+  content: '▸'; font-size: 10px; color: var(--muted);
+  transition: transform .18s var(--ease);
+}
+details.panel.fold[open] > summary::before { transform: rotate(90deg); }
+details.panel.fold > summary:hover { color: var(--text); background: rgba(255, 255, 255, .03); }
+details.panel.fold[open] > summary { color: var(--text); border-bottom: 1px solid var(--line); }
+details.panel.fold > *:not(summary) { padding: 0 13px; }
+details.panel.fold > *:not(summary):last-child { padding-bottom: 12px; }
+details.panel.fold > .btn-row:last-child { padding-bottom: 0; }
+.sum-badge {
+  margin-left: auto; font-size: 10px; font-weight: 400;
+  color: var(--muted); padding: 2px 8px; border-radius: 999px;
+  border: 1px solid var(--line); white-space: nowrap;
+}
+.sum-badge.ok { color: var(--ok); border-color: rgba(62, 207, 142, .4); background: rgba(62, 207, 142, .08); }
+.sum-badge.warn { color: var(--warn); border-color: rgba(255, 178, 36, .4); background: rgba(255, 178, 36, .08); }
+.sum-badge.err { color: var(--err); border-color: rgba(255, 93, 108, .4); background: rgba(255, 93, 108, .08); }
+
+/* 按钮组 / 行内勾选：统一间距，避免每处各写一套 */
+.btn-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.btn-row + .btn-row { margin-top: 8px; }
+.chk {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 12px; color: var(--text); cursor: pointer; white-space: nowrap;
+}
+.primary-btn.sm { padding: 6px 14px; font-size: 12px; }
+
+/* 图表：canvas + 图例合成一个容器，不再各自带边框 */
+.qc-tabs { display: flex; gap: 4px; margin-bottom: 9px; }
 .qc-tab {
   cursor: pointer; font-size: 11px; color: var(--muted);
   background: transparent; border: 1px solid var(--line);
-  border-radius: 7px; padding: 4px 9px; transition: all .18s var(--ease);
+  border-radius: 7px; padding: 4px 11px; transition: all .18s var(--ease);
 }
 .qc-tab:hover { color: var(--text); border-color: rgba(79, 140, 255, .45); }
 .qc-tab.on {
   color: var(--accent); border-color: rgba(79, 140, 255, .6);
-  background: rgba(79, 140, 255, .12); box-shadow: var(--glow);
+  background: rgba(79, 140, 255, .12);
 }
-.qc-verdict {
-  margin-left: auto; font-size: 11px; padding: 3px 9px; border-radius: 999px;
-  border: 1px solid var(--line); color: var(--muted); white-space: nowrap;
-}
-.qc-verdict.ok { color: var(--ok); border-color: rgba(62, 207, 142, .4); background: rgba(62, 207, 142, .1); }
-.qc-verdict.warn { color: var(--warn); border-color: rgba(255, 178, 36, .4); background: rgba(255, 178, 36, .1); }
-.qc-verdict.err { color: var(--err); border-color: rgba(255, 93, 108, .4); background: rgba(255, 93, 108, .1); }
-
 .qc-canvas-wrap {
-  position: relative; border: 1px solid var(--line); border-radius: var(--radius);
-  background: rgba(8, 10, 15, .55); overflow: hidden;
+  border: 1px solid var(--line); border-radius: var(--radius);
+  background: rgba(0, 0, 0, .22); overflow: hidden;
 }
 .qc-canvas-wrap canvas { display: block; width: 100%; height: 132px; }
 .qc-legend {
@@ -390,35 +445,48 @@ label.pass-line { display: flex; align-items: center; gap: 6px; color: var(--mut
 .qc-legend span { display: inline-flex; align-items: center; gap: 4px; }
 .qc-dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; }
 
-/* 指标条：横向刻度 + 当前值指针 */
-.qc-metrics { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px 14px; }
+/* 指标卡：2 列，数值与走势线贴合，压缩留白 */
+.qc-metrics { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin-top: 9px; }
 .qc-metric {
-  border: 1px solid var(--line); border-radius: 9px; padding: 7px 9px;
-  background: rgba(8, 10, 15, .45);
+  border: 1px solid var(--line); border-radius: 9px;
+  background: rgba(0, 0, 0, .18); padding: 8px 10px;
 }
-.qc-metric .k { font-size: 10px; color: var(--muted); display: block; margin-bottom: 3px; }
-.qc-metric .v { font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; }
-.qc-metric .u { font-size: 10px; color: var(--muted); margin-left: 2px; }
+.qc-metric .k { font-size: 10px; color: var(--muted); }
+.qc-metric .v { font-size: 16px; font-weight: 600; font-variant-numeric: tabular-nums; margin-left: 4px; }
+.qc-metric .u { font-size: 10px; color: var(--muted); margin-left: 1px; }
 .qc-metric .track {
   position: relative; height: 4px; margin-top: 6px; border-radius: 2px;
   background: rgba(255, 255, 255, .07); overflow: hidden;
 }
 .qc-metric .fill { position: absolute; inset: 0 auto 0 0; border-radius: 2px; transition: width .2s linear; }
-/* 目标区间标记（ASR 甜区）——指针落在这段里说明电平合适 */
 .qc-metric .band {
   position: absolute; top: 0; bottom: 0; background: rgba(62, 207, 142, .16);
   border-left: 1px solid rgba(62, 207, 142, .35); border-right: 1px solid rgba(62, 207, 142, .35);
 }
-.qc-hint { font-size: 11px; color: var(--muted); margin: 8px 0 0; }
-.qc-hint b { color: var(--text); font-weight: 600; }
-.qc-spark { display: block; width: 100%; height: 34px; margin-top: 5px; }
+.qc-spark { display: block; width: 100%; height: 26px; margin-top: 4px; }
 
-/* ---------- 简单模式：预设 + 一键优化（v0.12.6）----------
-   原则：默认只露「一键」和「三选一」，裸参数全部收进折叠区。
-   用户不需要理解 attenLim/gateRelease 这些名字，只需要选场景。 */
-.tune-simple { margin: 10px 0 6px; }
-.tune-hero { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
-.tune-hero .sub { flex: 1 1 220px; }
+/* 判读徽章：三种状态色，用于面板头与折叠标题 */
+.qc-verdict {
+  font-size: 11px; padding: 3px 9px; border-radius: 999px;
+  border: 1px solid var(--line); color: var(--muted); white-space: nowrap;
+}
+.qc-verdict.ok, #diag-verdict.ok, #opt-sum-verdict.ok { color: var(--ok); border-color: rgba(62, 207, 142, .4); background: rgba(62, 207, 142, .1); }
+.qc-verdict.warn, #diag-verdict.warn, #opt-sum-verdict.warn { color: var(--warn); border-color: rgba(255, 178, 36, .4); background: rgba(255, 178, 36, .1); }
+.qc-verdict.err, #diag-verdict.err, #opt-sum-verdict.err { color: var(--err); border-color: rgba(255, 93, 108, .4); background: rgba(255, 93, 108, .1); }
+
+/* 诊断四格：紧凑两列，关键格高亮 */
+.qc-diag-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 7px; }
+.qc-diag-cell {
+  border: 1px solid var(--line); border-radius: 8px;
+  background: rgba(0, 0, 0, .18); padding: 7px 10px;
+}
+.qc-diag-cell.hl { border-color: rgba(79, 140, 255, .35); background: rgba(79, 140, 255, .08); }
+.qc-diag-cell .k { font-size: 10px; color: var(--muted); display: block; }
+.qc-diag-cell .v { font-size: 16px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.qc-diag-cell .v small { font-size: 10px; color: var(--muted); font-weight: 400; margin-left: 2px; }
+
+/* 优化区：主按钮 + 预设卡 */
+.tune-hero { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .primary-btn {
   cursor: pointer; font-size: 13px; font-weight: 600;
   color: #fff; background: linear-gradient(135deg, var(--accent), var(--accent-2));
@@ -428,53 +496,27 @@ label.pass-line { display: flex; align-items: center; gap: 6px; color: var(--mut
 }
 .primary-btn:hover { box-shadow: 0 3px 20px rgba(79, 140, 255, .55); transform: translateY(-1px); }
 .primary-btn.running { background: linear-gradient(135deg, var(--warn), #ff8a4c); }
-.tune-presets { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.tune-presets { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
 .preset-btn {
-  cursor: pointer; text-align: left; font-size: 11px; line-height: 1.5;
-  color: var(--muted); background: rgba(8, 10, 15, .5);
-  border: 1px solid var(--line); border-radius: 9px; padding: 7px 12px;
-  transition: all .18s var(--ease);
+  cursor: pointer; text-align: left; font-size: 12px; line-height: 1.45;
+  color: var(--muted); background: rgba(0, 0, 0, .2);
+  border: 1px solid var(--line); border-radius: 9px; padding: 8px 13px;
+  transition: all .18s var(--ease); flex: 1 1 130px;
 }
-.preset-btn i { font-style: normal; font-size: 10px; opacity: .75; }
+.preset-btn i { display: block; font-style: normal; font-size: 10px; opacity: .7; margin-top: 2px; }
 .preset-btn:hover { color: var(--text); border-color: rgba(79, 140, 255, .5); }
 .preset-btn.on {
   color: var(--accent); border-color: rgba(79, 140, 255, .6);
   background: rgba(79, 140, 255, .12);
 }
-/* 原始音频旁路：当前的主功能，给它独立的高亮容器 */
-.bypass-row {
-  display: flex; align-items: flex-start; gap: 10px; flex-wrap: wrap;
-  border: 1px solid rgba(255, 178, 36, .3); border-radius: var(--radius);
-  background: rgba(255, 178, 36, .07); padding: 9px 12px; margin-bottom: 10px;
-}
-.bypass-row label { font-size: 13px; white-space: nowrap; }
-.bypass-row .sub { flex: 1 1 260px; }
-#mic-tune-box summary { font-size: 12px; color: var(--muted); cursor: pointer; padding: 4px 0; }
-#mic-tune-box summary:hover { color: var(--text); }
 
-/* ---------- 底噪诊断（v0.12.5）----------
-   回答「底噪高是降噪没工作，还是麦的物理底噪」——决定要不要继续投软件工。
-   降噪前/后/降噪量三格，降噪量高亮（它直接决定结论）。 */
-.qc-diag {
-  margin-top: 10px; padding: 10px 12px;
-  border: 1px solid var(--line); border-radius: var(--radius);
-  background: rgba(8, 10, 15, .45);
+/* 滑块行：与 .mic-row 同构但更紧凑，数字右对齐避免跳动 */
+#mic-tune-box .mic-row { margin-bottom: 6px; }
+#mic-tune-box .mic-row input[type=range] { flex: 1; }
+#mic-tune-box .mic-row > .sub:last-child {
+  flex: 0 0 46px; text-align: right;
+  font-variant-numeric: tabular-nums;
 }
-.qc-diag-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
-.qc-diag-head h3 { font-size: 12px; font-weight: 600; margin: 0; color: var(--muted); }
-.qc-diag-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
-.qc-diag-cell {
-  border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px;
-  background: rgba(8, 10, 15, .5);
-}
-.qc-diag-cell.hl { border-color: rgba(79, 140, 255, .35); background: rgba(79, 140, 255, .08); }
-.qc-diag-cell .k { font-size: 10px; color: var(--muted); display: block; margin-bottom: 3px; }
-.qc-diag-cell .k i { font-style: normal; opacity: .7; }
-.qc-diag-cell .v { font-size: 16px; font-weight: 600; font-variant-numeric: tabular-nums; }
-.qc-diag-cell .v small { font-size: 10px; color: var(--muted); font-weight: 400; margin-left: 2px; }
-#diag-verdict.ok { color: var(--ok); border-color: rgba(62, 207, 142, .4); background: rgba(62, 207, 142, .1); }
-#diag-verdict.warn { color: var(--warn); border-color: rgba(255, 178, 36, .4); background: rgba(255, 178, 36, .1); }
-#diag-verdict.err { color: var(--err); border-color: rgba(255, 93, 108, .4); background: rgba(255, 93, 108, .1); }
 
 /* ---------- 按住说话键勾选 ---------- */
 .trigger-keys { display: flex; flex-wrap: wrap; gap: 4px 12px; flex: 1; }
