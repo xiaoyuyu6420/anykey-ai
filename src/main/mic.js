@@ -368,6 +368,15 @@ class MicPipeline {
     // 1) 陡高通（16k 域）—— raw 之外的所有档位都要（hp 档就到此为止）
     for (let i = 0; i < BLOCK; i++) blk[i] = this.hp2.process(this.hp1.process(blk[i]));
 
+    // 探针的「处理前」基准点：高通之后、任何整形/降噪之前。
+    // 放在这里而不是更下面，是为了让 hp / speech 这些会提前 return 的档位
+    // 也能采到数据——否则只有 full 档能测信噪比，无法横向对比（踩过）。
+    const preHpRms = this._probeOn ? rmsOf(blk, BLOCK) : 0;
+    const probeAnd = (buf) => {
+      if (this._probeOn) this._updateProbe(preHpRms, rmsOf(blk, BLOCK));
+      return buf;
+    };
+
     // speech 档：去低频轰鸣 + 补辅音区（高频搁架），不做降噪/增益/门控。
     // 依据：实测该麦说话段 2-8kHz 仅占 1.3%（正常语音约 4~5%），
     // 而 s/sh/t/k/f 等决定可懂度的辅音全在该频段，ASR 对此高度敏感。
@@ -376,9 +385,10 @@ class MicPipeline {
       for (let i = 0; i < BLOCK; i++) {
         let v = this.sh1.process(blk[i]);
         if (v > 32767) v = 32767; else if (v < -32768) v = -32768;
+        blk[i] = v;                      // 写回，便于探针在统一位置取「处理后」值
         buf.writeInt16LE(Math.round(v), i * 2);
       }
-      return buf;
+      return probeAnd(buf);
     }
 
     // hp 档：只去低频轰鸣，不做降噪/增益/门控。用来验证「刺」是否来自低频
@@ -387,9 +397,10 @@ class MicPipeline {
       for (let i = 0; i < BLOCK; i++) {
         let v = blk[i];
         if (v > 32767) v = 32767; else if (v < -32768) v = -32768;
+        blk[i] = v;
         buf.writeInt16LE(Math.round(v), i * 2);
       }
-      return buf;
+      return probeAnd(buf);
     }
 
     // 1.5) 引擎此前抛异常被旁路：冷却期到后自动重试恢复（用户补齐 dll/模型也生效）
@@ -398,13 +409,20 @@ class MicPipeline {
       this.initDenoiser().then(e => { if (e) console.log('[mic] 降噪引擎重试恢复:', e); }).catch(() => {});
     }
 
-    // ★ 诊断探针（降噪前）：在降噪链入口测 RMS。
-    // 位置刻意选在高通之后、降噪之前、AGC 之前——AGC 会按语音段动态改增益，
-    // 测在 AGC 之后就分不清「降噪压了多少」和「增益抬了多少」。
-    const preDenoiseRms = this._probeOn ? rmsOf(blk, BLOCK) : 0;
-
     // 2) 升采样 ×3 → DFN3/RNNoise 降噪（原地写回）→ 取中点降采样
     if (this.engine) this._denoiseBlock(blk);
+
+    // 2.4) 辅音区补偿（full 档也生效，见 config.micHfBoost）。
+    // 位置刻意在降噪之后、门控之前：先让 DFN3 在「自然频谱」上工作
+    // （它的声学模型是按正常人声训练的，提前抬高频会被当成噪声压掉），
+    // 再做频谱整形，最后才交给门控/AGC 定电平。
+    if (this.hfBoostDb > 0 && this.mode === 'full') {
+      for (let i = 0; i < BLOCK; i++) {
+        let v = this.sh1.process(blk[i]);
+        if (v > 32767) v = 32767; else if (v < -32768) v = -32768;
+        blk[i] = v;
+      }
+    }
 
     // 2.5) 稳态噪声扣除（v0.12.5）：放在神经网络之后、门控之前。
     // 顺序有讲究——DFN3/RNNoise 处理完非稳态噪声（键盘声、突发声），
@@ -412,8 +430,8 @@ class MicPipeline {
     // 这部分正好被噪声谱建模扣除。各司其职，不重复处理。
     if (this.noiseSub) this.noiseSub.processBlock(blk);
 
-    // ★ 诊断探针（降噪后）：与 preDenoiseRms 同一点位、同一算法，差值即降噪量
-    if (this._probeOn) this._updateProbe(preDenoiseRms, rmsOf(blk, BLOCK));
+    // ★ 诊断探针（处理后）：与 preHpRms 同一点位、同一算法，差值即处理量
+    if (this._probeOn) this._updateProbe(preHpRms, rmsOf(blk, BLOCK));
 
     // 3) VAD 门控 + AGC + 压缩器 + 软限幅（16k 域逐样本状态机，块间无缝）
     return this._gateAgc(blk);

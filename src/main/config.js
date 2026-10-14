@@ -38,7 +38,7 @@ const DEFAULTS = {
     // 处理档位（v0.13.2）：raw=全跳过 / hp=只去低频轰鸣 / full=完整处理链。
     // hp 档的由来：实测底噪 38% 能量在 200Hz 以下，这部分低频除了「闷」，
     // 还会让廉价耳机/音箱非线性失真而听感「刺」——需要一个独立档位验证
-    micMode: 'speech',
+    micMode: 'full',
     // 辅音区补偿量（dB，mode='speech' 时生效，单级搁架 @2600Hz，0=关闭）。
     // 实测该键盘麦说话段 2-8kHz 仅占 1.33%（正常语音 4~5%）——辅音区弱约 5dB，
     // 而 s/sh/t/k/f 等决定可懂度的音全在该频段，ASR 对此高度敏感。
@@ -88,7 +88,7 @@ const DEFAULTS = {
     // 原理：稳态噪声（麦自噪/风扇/房间底噪）是持续存在的，可被精确建模扣除；
     // 而神经网络对稳态噪声刻意保守（否则远处轻声也被删），两层互补。
     // 需静音约 1 秒完成噪声谱学习。
-    noiseSubtractEnabled: true,
+    noiseSubtractEnabled: false,
     overSub: 2.0,
     floorDb: -18,
     statsEnabled: true,      // 打字统计（只记每键计数与每日总数，纯本地 stats.json）
