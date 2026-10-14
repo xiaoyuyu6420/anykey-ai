@@ -63,6 +63,7 @@ console.log('[P1] 探针降噪量与真实倍数一致');
   ok(Math.abs(r.speech.cutDb - 12.04) < 1.5, `语音段降噪量 ≈12.04dB（实测 ${r.speech.cutDb}）`);
   ok(r.silence.post < r.silence.pre, `post < pre（${r.silence.pre} → ${r.silence.post}）`);
   ok(typeof r.verdict === 'string' && r.verdict !== '采样中', `产出判读：[${r.verdict}]`);
+  ok(Math.abs(r.snrGainDb) < 1.5, `探针按同比例压 pre/post，SNR 提升应≈0（实测 ${r.snrGainDb}dB）`);
   ok(r.advice.length > 0, `建议非空（${r.advice.slice(0, 36)}…）`);
 }
 
@@ -74,7 +75,8 @@ console.log('[P2] 引擎旁路 → 判读为降噪几乎没工作');
   runTone(p, 300, 8000, 200); // 语音段
   const r = p.probeReport();
   ok(r.silence.cutDb < 2, `无降噪时静音段降噪量≈0（${r.silence.cutDb}dB）`);
-  ok(/没工作|保守/.test(r.verdict), `判读指向降噪失效：[${r.verdict}]`);
+  ok(/没改善/.test(r.verdict), `判读指向降噪无效：[${r.verdict}]`);
+  ok(Math.abs(r.snrGainDb) < 1.5, `无降噪时 SNR 提升 ≈0（${r.snrGainDb}dB）`);
 }
 
 console.log('[P3] 语音段与静音段分开统计');

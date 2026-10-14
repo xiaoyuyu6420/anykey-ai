@@ -788,6 +788,9 @@ function bridgeLog(msg, force) {
 }
 let micLevelTimer = null;
 
+// 录音测试状态：录的是「送进虚拟声卡的最终 PCM」= ASR 真正收到的东西
+const rec = { on: false, chunks: [], t0: 0, timer: null };
+
 // worklet 模块 URL：主进程经 IPC 转好的 file:// URL（preload 在沙箱里跑，
 // 拿不到 Node 的 path/url 模块，只能由主进程算）。
 // 拿不到时兜底相对路径——打包后 file:// 指向 app.asar 内可能不可加载，
@@ -927,6 +930,8 @@ async function initMicBridge() {
     }
     // 质量面板用同一批字节——面板显示的就是识别引擎真正收到的信号
     pushQualitySample(bytes);
+    // 录音测试：必须在 transfer 给 worklet 之前复制（transfer 后原 buffer 失效）
+    if (rec.on && rec.chunks.length < 3000) rec.chunks.push(bytes.slice());
     let peak = 0;
     for (let i = 0; i < bytes.length; i += 2) {
       const a = Math.abs((bytes[i] | (bytes[i + 1] << 8)) << 16 >> 16);
@@ -1260,6 +1265,51 @@ function initTunePanel() {
       toast('已撤销');
     } else toast('还没有可撤销的优化记录', true);
   };
+
+  // ---- 录音测试：录下送进 ASR 的音频，用来分辨「音频问题」还是「识别引擎问题」 ----
+  const btnRec = document.getElementById('rec-test');
+  const recHint = document.getElementById('rec-hint');
+  if (btnRec) {
+    btnRec.onclick = async () => {
+      if (!rec.on) {
+        rec.on = true;
+        rec.chunks = [];
+        rec.t0 = Date.now();
+        btnRec.textContent = '停止并保存';
+        recHint.innerHTML = '正在录音——<b>按住开麦键说一句正常的话</b>，说完点这里保存';
+        // 30s 上限，防忘记停止导致内存堆积
+        rec.timer = setTimeout(() => btnRec.click(), 30000);
+        return;
+      }
+      rec.on = false;
+      if (rec.timer) { clearTimeout(rec.timer); rec.timer = null; }
+      btnRec.textContent = '录音测试';
+      const secs = (Date.now() - rec.t0) / 1000;
+      const chunks = rec.chunks;
+      rec.chunks = [];
+      if (!chunks.length) {
+        recHint.textContent = '没录到音频——确认已勾「启用桥接」且按住开麦键说过话。';
+        toast('没录到音频', true);
+        return;
+      }
+      // 拼成一整块 PCM（int16 LE）
+      let total = 0;
+      for (const c of chunks) total += c.length;
+      const all = new Uint8Array(total);
+      let off = 0;
+      for (const c of chunks) { all.set(c, off); off += c.length; }
+      const r = await window.aikey.saveWav(Array.from(all));
+      if (r.ok) {
+        recHint.innerHTML = `已保存 <b>${r.seconds}s</b> 音频：${r.path}<br>放来听——人耳清楚就是识别引擎的问题。`;
+        toast(`已保存 ${r.seconds}s 录音`);
+      } else if (!r.canceled) {
+        recHint.textContent = '保存失败：' + (r.error || '未知错误');
+        toast('保存失败', true);
+      } else {
+        recHint.textContent = `已取消（录了约 ${secs.toFixed(1)}s）。`;
+      }
+    };
+  }
 }
 
 // ---------- 打字音效 ----------

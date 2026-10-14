@@ -360,27 +360,44 @@ class MicPipeline {
     const db = (pre, post) => (pre > 0 && post > 0 ? Math.round(20 * Math.log10(pre / post) * 10) / 10 : 0);
     const silPre = Math.round(s.pre), silPost = Math.round(s.post);
     const spPre = Math.round(v.pre), spPost = Math.round(v.post);
-    // 判读：静音段（底噪）的降噪表现决定「软件还能不能救」
-    let verdict = '采样中', advice = '按住开麦键说几句话，再静音几秒，让面板采满数据。';
-    if (s.m > 20 && s.pre > 0) {
+
+    // ★ 真正决定 ASR 能不能听清的是「信噪比提升了多少」，不是「降噪量多大」。
+    //   降噪量只说明压了多少（压得再狠，若人声一起压掉也是白压）；
+    //   SNR 提升 = 底噪压制 - 人声压制，直接把两件事放在一起衡量。
+    //   实测教训：曾出现「底噪压 15.7dB、人声也压 15.3dB」——降噪量好看，
+    //   SNR 只提升 0.1dB，等于只是把整体音量调小，对识别毫无帮助。
+    const inSnr = (s.pre > 0 && v.pre > 0) ? 20 * Math.log10(v.pre / s.pre) : 0;
+    const outSnr = (s.post > 0 && v.post > 0) ? 20 * Math.log10(v.post / s.post) : 0;
+    const snrGainDb = Math.round((outSnr - inSnr) * 10) / 10;
+    const r1 = x => Math.round(x * 10) / 10;
+
+    // 判读依据：SNR 提升（≥6dB 显著，2~6dB 有限，<2dB 基本没用）
+    let verdict = '采样中';
+    let advice = '按住开麦键说几句话，再静音几秒，面板会自动采样并给出判读。';
+    if (s.m > 20 && v.n > 20 && s.pre > 0 && v.pre > 0) {
       const cut = db(s.pre, s.post);
-      if (cut >= 6) {
-        verdict = '降噪正常工作';
-        advice = `底噪已被压低 ${cut}dB（${silPre} → ${silPost}）。残留 ${silPost} 是降噪后的残余，若仍嫌吵可加大降噪强度。`;
-      } else if (cut >= 2) {
-        verdict = '降噪偏保守';
-        advice = `底噪只压低 ${cut}dB（${silPre} → ${silPost}）。attenLim（衰减上限）限制了降噪力度，可上调试试。`;
+      if (snrGainDb >= 6) {
+        verdict = '信噪比显著改善';
+        advice = `人声比底噪清晰了 ${snrGainDb}dB（输入 ${r1(inSnr)}dB → 输出 ${r1(outSnr)}dB）。底噪压了 ${cut}dB、残余 ${silPost}。这个状态下识别应该明显好转。`;
+      } else if (snrGainDb >= 2) {
+        verdict = '信噪比略有改善';
+        advice = `信噪比提升 ${snrGainDb}dB（输入 ${r1(inSnr)}dB → 输出 ${r1(outSnr)}dB）。底噪压了 ${cut}dB。提升有限——` +
+          (cut < 6 ? '降噪力度可能不够，试试「离得远/环境吵」预设。' : '噪声可能不是稳态的，或输入信噪比本身太低。');
       } else {
-        verdict = '降噪几乎没工作';
-        advice = `底噪 ${silPre} → ${silPost}（仅 ${cut}dB）。降噪未生效——要么引擎在旁路，要么 attenLim 太低，属可修问题而非换麦问题。`;
+        verdict = '信噪比几乎没改善';
+        advice = `输入 ${r1(inSnr)}dB → 输出 ${r1(outSnr)}dB，仅提升 ${snrGainDb}dB。` +
+          `底噪压了 ${cut}dB、人声压了 ${db(v.pre, v.post)}dB` +
+          (cut > 8 ? '——两者接近，说明只是把整体音量调小，不是真降噪。' : '。噪声很可能不是稳态的（稳态噪声可开「稳态底噪扣除」）。');
       }
-      if (spPre > 0 && db(spPre, spPost) > cut + 3) {
-        advice += ` 注意：语音段也被压了 ${db(spPre, spPost)}dB，可能伤到人声，降噪强度别再加了。`;
+      // 输入 SNR 本身太低时，任何降噪都难有作为——这是物理限制，要说清楚
+      if (inSnr < 8) {
+        advice += ` 注意：原始信噪比只有 ${r1(inSnr)}dB（人声仅比底噪高一点），这是麦克风拾音的物理限制，软件能帮的很有限——靠近一点说话效果会明显好于任何调参。`;
       }
     }
     return {
       silence: { pre: silPre, post: silPost, cutDb: db(s.pre, s.post), samples: s.m },
       speech: { pre: spPre, post: spPost, cutDb: db(v.pre, v.post), samples: v.n },
+      inSnrDb: r1(inSnr), outSnrDb: r1(outSnr), snrGainDb,
       verdict, advice,
     };
   }

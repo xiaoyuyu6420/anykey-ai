@@ -168,19 +168,27 @@
         </div>
         <div class="qc-diag-grid">
           <div class="qc-diag-cell">
-            <span class="k">降噪前 <i>（说话时的底噪）</i></span>
+            <span class="k">降噪前 <i>（原始底噪）</i></span>
             <span class="v" id="diag-pre">–</span>
           </div>
           <div class="qc-diag-cell">
-            <span class="k">降噪后 <i>（送进识别）</i></span>
+            <span class="k">降噪后 <i>（残余底噪）</i></span>
             <span class="v" id="diag-post">–</span>
           </div>
-          <div class="qc-diag-cell hl">
-            <span class="k">降噪量 <i>（压了多少）</i></span>
+          <div class="qc-diag-cell">
+            <span class="k">底噪压制</span>
             <span class="v" id="diag-cut">–</span>
+          </div>
+          <div class="qc-diag-cell hl">
+            <span class="k">信噪比提升 <i>（关键）</i></span>
+            <span class="v" id="diag-snr">–</span>
           </div>
         </div>
         <p class="qc-hint" id="diag-advice">按住开麦键说几句话、再静音几秒，面板会自动采样并给出判读。</p>
+        <div class="mic-row" style="margin-top:8px">
+          <button id="rec-test" class="ghost-btn">录音测试</button>
+          <span id="rec-hint" class="sub">录下<b>实际送进识别引擎</b>的音频存成 WAV。人耳听着清楚 → 问题在识别引擎；人耳都费劲 → 问题在音频。</span>
+        </div>
       </div>
 
       <div class="tune-simple">

@@ -454,7 +454,7 @@ label.pass-line { display: flex; align-items: center; gap: 6px; color: var(--mut
 }
 .qc-diag-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
 .qc-diag-head h3 { font-size: 12px; font-weight: 600; margin: 0; color: var(--muted); }
-.qc-diag-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.qc-diag-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
 .qc-diag-cell {
   border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px;
   background: rgba(8, 10, 15, .5);

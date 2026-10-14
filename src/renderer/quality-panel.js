@@ -234,23 +234,26 @@ class QualityPanel {
     if (this.view === 'metric') this._draw();
   }
 
-  // 底噪诊断：把探针的「降噪前/后/量」摆出来，替用户下结论
+  // 底噪诊断：把探针的「降噪前/后/压制/信噪比提升」摆出来，替用户下结论。
+  // 关键指标是「信噪比提升」——降噪量好看但人声被一起压掉等于白压（实测教训）
   _renderDiag(d) {
     const p = d.probe;
     const el = (id) => document.getElementById(id);
     const vEl = el('diag-verdict'), advEl = el('diag-advice');
-    const preEl = el('diag-pre'), postEl = el('diag-post'), cutEl = el('diag-cut');
-    if (!p || !vEl || !preEl || !postEl || !cutEl || !advEl) return;
+    const preEl = el('diag-pre'), postEl = el('diag-post');
+    const cutEl = el('diag-cut'), snrEl = el('diag-snr');
+    if (!p || !vEl || !preEl || !postEl || !cutEl || !snrEl || !advEl) return;
     const s = p.silence;
     preEl.innerHTML = `${s.pre}<small>RMS</small>`;
     postEl.innerHTML = `${s.post}<small>RMS</small>`;
     cutEl.innerHTML = `${s.cutDb}<small>dB</small>`;
+    const g = p.snrGainDb;
+    snrEl.innerHTML = `<span style="color:${g >= 6 ? 'var(--ok)' : g >= 2 ? 'var(--warn)' : 'var(--err)'}">${g > 0 ? '+' : ''}${g}<small>dB</small></span>`;
     vEl.textContent = p.verdict;
-    // 颜色按结论分档：正常工作=绿；偏保守/没工作=黄/红
     vEl.className = 'qc-verdict ' + (
-      p.verdict === '降噪正常工作' ? 'ok'
-        : p.verdict === '降噪偏保守' ? 'warn'
-          : p.verdict === '降噪几乎没工作' ? 'err' : ''
+      p.verdict === '信噪比显著改善' ? 'ok'
+        : p.verdict === '信噪比略有改善' ? 'warn'
+          : p.verdict === '信噪比几乎没改善' ? 'err' : ''
     );
     advEl.textContent = p.advice;
   }

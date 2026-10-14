@@ -781,6 +781,35 @@ function startMicDiag(on) {
 ipcMain.handle('mic-worklet-url', () =>
   pathToFileURL(path.join(__dirname, '..', 'renderer', 'mic-bridge-worklet.js')).href);
 
+// 录音测试：把「实际送进 ASR 的音频」存成 WAV，用来判断问题在音频还是在识别引擎
+// 逻辑：人耳听着清楚 → 识别引擎的锅；人耳都费劲 → 音频的锅。
+// 这是唯一能排除「我一直在优化却没人听」这类假设的办法。
+ipcMain.handle('save-wav', async (_e, arr) => {
+  if (!arr || !arr.length) return { ok: false, error: '没有录到音频' };
+  const { dialog } = require('electron');
+  const now = new Date();
+  const p = n => String(n).padStart(2, '0');
+  const r = await dialog.showSaveDialog(win, {
+    defaultPath: `麦克风测试-${p(now.getMonth() + 1)}${p(now.getDate())}-${p(now.getHours())}${p(now.getMinutes())}.wav`,
+    filters: [{ name: 'WAV 音频', extensions: ['wav'] }],
+  });
+  if (r.canceled || !r.filePath) return { ok: false, canceled: true };
+  try {
+    const pcm = Buffer.from(Uint8Array.from(arr));
+    // 标准 44 字节 WAV 头：16kHz / 单声道 / 16bit
+    const h = Buffer.alloc(44);
+    h.write('RIFF', 0); h.writeUInt32LE(36 + pcm.length, 4); h.write('WAVE', 8);
+    h.write('fmt ', 12); h.writeUInt32LE(16, 16); h.writeUInt16LE(1, 20);
+    h.writeUInt16LE(1, 22); h.writeUInt32LE(16000, 24); h.writeUInt32LE(32000, 28);
+    h.writeUInt16LE(2, 32); h.writeUInt16LE(16, 34);
+    h.write('data', 36); h.writeUInt32LE(pcm.length, 40);
+    fs.writeFileSync(r.filePath, Buffer.concat([h, pcm]));
+    return { ok: true, path: r.filePath, seconds: Math.round(pcm.length / 32000 * 10) / 10 };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+});
+
 // 设置页「立即体检」：返回当前 DSP 快照，用于调参前后对比
 ipcMain.handle('mic-diagnostics', () => (micPipeline ? micPipeline.diagnostics() : null));
 
