@@ -212,8 +212,15 @@ main { padding: 16px 20px 40px; }
   border-color: var(--line-strong);
 }
 .tk-head { display: flex; justify-content: flex-end; }
-/* ---------- 模式 tab + 键盘当前模式徽章 ---------- */
-.mode-bar { margin-top: 12px; display: flex; align-items: flex-end; justify-content: space-between; border-bottom: 1px solid var(--line-strong); }
+/* ---------- 模式行：左边选「编辑哪一套键位」，右边是键盘实际模式（硬件状态） ---------- */
+.mode-bar {
+  margin-top: 12px; display: flex; align-items: flex-end; justify-content: space-between;
+  gap: 12px; border-bottom: 1px solid var(--line-strong);
+}
+.mode-edit { display: flex; align-items: flex-end; gap: 10px; min-width: 0; }
+.mode-bar-label { font-size: 12px; color: var(--muted); padding-bottom: 9px; white-space: nowrap; }
+.mode-live { display: flex; align-items: center; gap: 8px; padding-bottom: 5px; }
+.mode-warn { font-size: 11.5px; color: var(--warn); }
 .mode-tabs { display: flex; gap: 4px; }
 .mode-tab {
   padding: 7px 20px; border: 1px solid transparent; border-bottom: none; cursor: pointer;
@@ -221,7 +228,7 @@ main { padding: 16px 20px 40px; }
   position: relative; top: 1px;
   transition: all .18s var(--ease);
 }
-.mic-mode-tab:hover { color: var(--text); }
+.mode-tab:hover { color: var(--text); }
 .mode-tab.active {
   background: linear-gradient(180deg, rgba(79, 140, 255, .14), rgba(79, 140, 255, .05));
   color: var(--accent); font-weight: 600; border-color: var(--line-strong);
@@ -324,8 +331,33 @@ label.pass-line { display: flex; align-items: center; gap: 6px; color: var(--mut
 
 /* ---------- 麦克风桥接卡片 ---------- */
 .mic-card { padding: 14px 16px; margin-bottom: 16px; }
-.mic-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.mic-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
 .mic-head h2 { font-size: 14px; font-weight: 600; margin: 0; }
+.mic-card .sub { font-size: 12px; color: var(--muted); line-height: 1.7; margin: 6px 0 0; }
+
+/* 整卡折叠（与 .panel.fold 同款交互，用在卡片级：收起时只留一行标题+状态）
+   折叠卡片本身也用于「非主要任务」——收起状态让主流程一屏看得完 */
+details.mic-card { padding: 0; overflow: hidden; }
+details.mic-card > summary {
+  display: flex; align-items: center; gap: 8px;
+  padding: 14px 16px; cursor: pointer; list-style: none;
+  transition: background .18s var(--ease);
+}
+details.mic-card > summary::-webkit-details-marker { display: none; }
+details.mic-card > summary::before {
+  content: '▸'; font-size: 10px; color: var(--muted); flex: 0 0 auto;
+  transition: transform .18s var(--ease);
+}
+details.mic-card[open] > summary::before { transform: rotate(90deg); }
+details.mic-card > summary:hover { background: rgba(255, 255, 255, .03); }
+details.mic-card[open] > summary { border-bottom: 1px solid var(--line); }
+details.mic-card > summary h2 {
+  font-size: 14px; font-weight: 600; margin: 0 auto 0 0; min-width: 0;
+  line-height: 1.45;
+}
+details.mic-card > summary h2 small { color: var(--muted); font-weight: 400; }
+details.mic-card > *:not(summary) { padding-left: 16px; padding-right: 16px; }
+details.mic-card > *:not(summary):last-child { padding-bottom: 14px; }
 .mic-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
 .mic-row .mic-label { color: var(--muted); font-size: 12px; flex: 0 0 auto; }
 .mic-row select {

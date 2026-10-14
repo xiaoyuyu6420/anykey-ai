@@ -169,8 +169,10 @@ const e = Array.from({length: 32}, () => Math.floor(Math.random() * 256));
   prebuilds，已 vendor 到 `vendor/mi-sbc/`），`decode(23B帧, 23, 160B dst)`
   恒返回 80 样本 int16
 - 每报文 3×80=240 样本 = **16kHz 单声道**，码率约 32kbps
+- 后处理（src/main/mic.js）：120Hz 一阶高通 → AGC（目标 RMS 4500，增益
+  1~8）→ 噪声门。源头 32kbps 有损，音质上限不可恢复，只能拉响度
 
-### 7.6 两条链路的实测采样率对比（2026-10 补充）
+### 7.5 两条链路的实测采样率对比（2026-10 补充）
 
 | 链路 | 帧格式 | 帧率 × 每帧样本 | 实测采样率 | 是否需要修正 |
 |---|---|---|---|---|
@@ -185,10 +187,8 @@ const e = Array.from({length: 32}, () => Math.floor(Math.random() * 256));
 是拿代码自身的假设验证自身的假设（循环论证）。可靠判据只有
 **样本数 ÷ 墙上秒数**。程序现按此自动校准（见 `src/main/mic.js` 的
 `_autoCalibrate`），两条链路都能正确识别。
-- 后处理（src/main/mic.js）：120Hz 一阶高通 → AGC（目标 RMS 4500，增益
-  1~8）→ 噪声门。源头 32kbps 有损，音质上限不可恢复，只能拉响度
 
-### 7.5 虚拟麦克风桥接（V2 完整链路）
+### 7.6 虚拟麦克风桥接（V2 完整链路）
 
 ```
 键盘 --HID 0x1B流--> kb-session(audio) --> mic.js 解码+增强(120ms批)
@@ -199,7 +199,7 @@ const e = Array.from({length: 32}, () => Math.floor(Math.random() * 256));
 
 依赖：VB-Cable 虚拟声卡（用户自装）；系统默认输入设备需选 CABLE Output。
 
-### 7.6 官方库 vendor 说明
+### 7.7 官方库 vendor 说明
 
 - `vendor/mi-hid/`：官方 HID 库 fork（hidapi 系）。**必须用它驱动蓝牙口**——
   node-hid 写蓝牙口同样成功但实测键盘不回（原因未深究，可能与其内部

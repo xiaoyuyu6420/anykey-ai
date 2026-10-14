@@ -14,6 +14,7 @@
         <i class="dot"></i><span id="session-pill-text">检测中…</span>
         <button id="session-reconnect" class="pill-btn" title="强制重建键盘会话（蓝牙半死/USB 抢读时用）" hidden>重连</button>
       </div>
+      <span id="battery-badge" class="badge" hidden></span>
     </div>
     <div class="header-settings">
       <label><input type="checkbox" id="opt-autostart" /> 开机自启</label>
@@ -40,8 +41,8 @@
       </section>
 
       <section class="hint reveal">
-        <p>① 按键盘上的「AI 切换」键进入/退出 AI 模式（F 行白灯亮） → ② 在下面对每个键配置动作 → ③ 按键即触发。</p>
-        <p class="sub">两种模式各配各的：比如普通模式 F10 留给输入法语音，AI 模式 F10 绑开麦+勾「保留原按键功能」。tab 上的数字 = 该模式已自定义的键数（初次两份相同是旧配置复制，改过哪份哪份就独立了）。键盘实际处于哪个模式看右侧徽章。直接按键盘上的键，对应行会闪烁高亮。双击行名称可改备注名。</p>
+        <p>① 按键盘上的「AI 切换」键切到 AI 模式（F 行白灯亮）→ ② 给键配动作 → ③ 按键即触发。</p>
+        <p class="sub">普通模式 / AI 模式是键盘的两套独立键位，各配各的（tab 上的数字 = 各自已自定义的键数）。按键盘上的键，对应行会闪烁高亮；双击行名可改备注。</p>
       </section>
 
       <section class="profile-bar reveal">
@@ -49,20 +50,31 @@
         <span class="sub" id="profile-hint">多套键位一键切换；双击档名重命名</span>
       </section>
 
+      <!-- 这里选的是「编辑哪一套键位」；键盘实际处于哪个模式看右侧徽章（硬件状态，唯一真源）。
+           两者不一致时会给出提示——否则最容易出现「改了不生效」 -->
       <section class="mode-bar reveal">
-        <div class="mode-tabs">
-          <button id="tab-fn" class="mode-tab active" data-mode="fn">普通模式</button>
-          <button id="tab-ai" class="mode-tab" data-mode="ai">AI 模式</button>
+        <div class="mode-edit">
+          <span class="mode-bar-label">正在编辑</span>
+          <div class="mode-tabs">
+            <button id="tab-fn" class="mode-tab active" data-mode="fn">普通模式</button>
+            <button id="tab-ai" class="mode-tab" data-mode="ai">AI 模式</button>
+          </div>
         </div>
-        <span id="kb-mode-badge" class="badge">键盘：普通模式</span>
-        <span id="battery-badge" class="badge" hidden></span>
+        <div class="mode-live">
+          <span id="mode-mismatch" class="mode-warn" hidden></span>
+          <span id="kb-mode-badge" class="badge">键盘：普通模式</span>
+        </div>
       </section>
 
       <div id="key-list"></div>
 
-      <section class="mic-card reveal" id="ailayer-card" hidden>
+      <details class="mic-card reveal fold-card" id="ailayer-card" hidden>
+      <summary>
+        <h2>任意键盘扩展 <small id="ailayer-sub">不接 RK 键盘也能用：按住触发键 + F 键 = 12 个自定义快捷键</small></h2>
+        <span id="ailayer-status" class="badge">未启用</span>
+      </summary>
       <div class="mic-head">
-        <h2>AI 层 <small id="ailayer-sub">任意键盘：触发键 + F1~F12 变成 12 个 AI 快捷键</small></h2>
+        <span class="sub" style="margin:0">给任意键盘（包括 RK 之外的）加一层系统级快捷键，热键由本应用拦截，不会串进当前应用。</span>
         <label><input type="checkbox" id="opt-ailayer" /> 启用</label>
       </div>
       <div class="mic-row">
@@ -72,11 +84,10 @@
           <option value="alt">Alt + F1~F12（进阶，自动跳过 F4 保留 Alt+F4）</option>
         </select>
         <button id="ailayer-preset" class="ghost-btn">Coding 预设</button>
-        <span id="ailayer-status" class="badge">未启用</span>
       </div>
       <div id="ailayer-slots"></div>
-      <p class="sub">不需要 RK 键盘：任意键盘按住触发键再按 F 键即触发，热键由系统拦截、不会串进当前应用；不启用时 F 键保持原样零影响。每格可配启动程序 / 网址 / 快捷键 / AI 直达（启动+延时发快捷键唤起输入框）。「Coding 预设」一键填入 Claude / ChatGPT / 语音输入等常用组合，改完即生效。</p>
-    </section>
+      <p class="sub">每格可配启动程序 / 网址 / 快捷键 / AI 直达（启动+延时发快捷键唤起输入框）。「Coding 预设」一键填入 Claude / ChatGPT / 语音输入等常用组合，改完即生效；不启用时 F 键保持原样零影响。</p>
+    </details>
 
       <section class="mic-card reveal">
       <div class="mic-head">
@@ -118,25 +129,35 @@
       </div>
       <div class="mic-level"><div id="mic-level-bar"></div></div>
 
+      <!-- ① 处理方式：整个面板唯一的必选项。选哪个就显示哪个的说明，
+           只把「对该档真正生效」的旋钮露出来，避免调了没反应 -->
       <div class="panel accent">
         <div class="panel-head">
-          <span class="panel-title">声音对比</span>
+          <span class="panel-title">处理方式</span>
+          <span class="qc-verdict" id="mode-badge">语音增强</span>
         </div>
         <div class="mic-mode-tabs">
-          <button class="mic-mode-tab" data-mode="raw" title="不做任何处理，键盘麦克风原样输出">原始</button>
-          <button class="mic-mode-tab" data-mode="hp" title="只去掉 100Hz 以下的低频轰鸣（空调、桌面震动）">只去低频</button>
-          <button class="mic-mode-tab" data-mode="speech" title="去低频 + 补强 2-8kHz 辅音区。识别引擎靠这段分辨字音，实测识别率最高">语音增强</button>
-          <button class="mic-mode-tab" data-mode="full" title="神经网络降噪 + 自动增益 + 门控。实测会让识别错误增加 30~50%，仅在极端噪声环境才考虑">完整处理</button>
+          <button class="mic-mode-tab" data-mode="raw">原始</button>
+          <button class="mic-mode-tab" data-mode="hp">只去低频</button>
+          <button class="mic-mode-tab" data-mode="speech">语音增强</button>
+          <button class="mic-mode-tab" data-mode="full">完整处理</button>
+        </div>
+        <p class="panel-hint" id="mode-desc">去低频轰鸣 + 补强 2-8kHz 辅音区。识别引擎靠这段分辨字音，实测识别率最高。</p>
+        <div class="mic-row" id="hfboost-row">
+          <span class="mic-label" title="越大，2-8kHz 辅音区补得越多。实测这个键盘麦的辅音比正常人声弱约 5dB，识别引擎靠这段分辨字音">辅音补偿</span>
+          <input type="range" id="tune-hfboost" min="0" max="12" step="1" />
+          <span id="tune-hfboost-v" class="sub">6 dB</span>
         </div>
         <div class="btn-row">
           <button id="rec-test" class="primary-btn sm">录音测试</button>
-          <span class="panel-hint" id="rec-hint" style="margin:0">点它把送进识别引擎的音频存成 WAV，三个档位各录一段对比着听。</span>
+          <span class="panel-hint" id="rec-hint" style="margin:0">录下送进识别引擎的音频存成 WAV，换档位各录一段即可对比。</span>
         </div>
       </div>
 
+      <!-- ② 实时监测：只做观测，不放任何会改变音频的开关 -->
       <div class="panel">
         <div class="panel-head">
-          <span class="panel-title">声音质量</span>
+          <span class="panel-title">实时监测</span>
           <span class="qc-verdict" id="qc-verdict">待测</span>
         </div>
         <div class="qc-tabs">
@@ -173,44 +194,18 @@
             <div class="track"><div class="fill" id="f-noise"></div><div class="band" id="b-noise"></div></div>
             <canvas class="qc-spark" id="spark-noise"></canvas>
           </div>
-          <div class="qc-metric">
-            <span class="k">人声电平</span>
-            <span class="v" id="diag-speech">–</span><span class="u">RMS</span>
-          </div>
-          <div class="qc-metric">
-            <span class="k">环境底噪</span>
-            <span class="v" id="diag-noise">–</span><span class="u">RMS</span>
-          </div>
-          <div class="qc-metric">
-            <span class="k">底噪压制</span>
-            <span class="v" id="diag-cut">–</span><span class="u">dB</span>
-          </div>
-          <div class="qc-metric hl">
-            <span class="k" id="diag-key-label">链路信噪比</span>
-            <span class="v" id="diag-snr">–</span><span class="u">dB</span>
-          </div>
+          <div class="qc-metric"><span class="k">人声电平</span><span class="v" id="diag-speech">–</span><span class="u">RMS</span></div>
+          <div class="qc-metric"><span class="k">环境底噪</span><span class="v" id="diag-noise">–</span><span class="u">RMS</span></div>
+          <div class="qc-metric"><span class="k">底噪压制</span><span class="v" id="diag-cut">–</span><span class="u">dB</span></div>
+          <div class="qc-metric hl"><span class="k" id="diag-key-label">链路信噪比</span><span class="v" id="diag-snr">–</span><span class="u">dB</span></div>
         </div>
         <p class="panel-hint" id="diag-advice">按住说话键说几句，面板会自动采样并给出判读。</p>
-        <p class="panel-hint" id="qc-hint">按住说话键，这里实时显示。说话时波形要有起伏。</p>
       </div>
 
-      <details class="panel fold">
-        <summary>声音优化<span id="opt-sum-verdict" class="sum-badge"></span></summary>
-        <div class="tune-hero">
-          <button id="autotune-run" class="primary-btn">一键自动优化</button>
-          <button id="autotune-rollback" class="ghost-btn">撤销</button>
-        </div>
-        <p class="panel-hint" id="autotune-status">点「一键自动优化」后一直按住说话键说话约 2 分钟，它自己找最佳设置。</p>
-        <div class="tune-presets">
-          <button class="preset-btn" data-preset="normal">正常使用<i>推荐</i></button>
-          <button class="preset-btn" data-preset="far">离得远 / 环境吵<i>加强降噪与音量</i></button>
-          <button class="preset-btn" data-preset="quiet">环境安静<i>声音更自然</i></button>
-        </div>
-        <p class="panel-hint" id="preset-hint">不确定就点「一键自动优化」，或者先试「正常使用」。</p>
-      </details>
-
+      <!-- ③ 高级参数：只影响「完整处理」档，折叠并明确警示 -->
       <details class="panel fold" id="mic-tune-box">
-        <summary>高级参数<span class="sum-badge">谨慎修改</span></summary>
+        <summary>高级参数<span class="sum-badge">只影响「完整处理」档</span></summary>
+        <p class="panel-hint"><b>正常使用不必动这里。</b>以下参数只对「完整处理」档生效，而实测该档会让识别错误增加 30~50%（神经网络降噪在约 7dB 信噪比下几乎不提升信噪比，却会削掉语音成分）。</p>
         <div class="mic-row">
           <span class="mic-label">降噪强度</span>
           <input type="range" id="tune-atten" min="1" max="16" step="1" />
@@ -224,12 +219,12 @@
         <div class="mic-row">
           <span class="mic-label">目标响度</span>
           <input type="range" id="tune-agc" min="1000" max="7000" step="100" />
-          <span id="tune-agc-v" class="sub">3600</span>
+          <span id="tune-agc-v" class="sub">4200</span>
         </div>
         <div class="mic-row">
           <span class="mic-label">增益上限</span>
           <input type="range" id="tune-maxgain" min="1" max="64" step="1" />
-          <span id="tune-maxgain-v" class="sub">32×</span>
+          <span id="tune-maxgain-v" class="sub">64×</span>
         </div>
         <div class="mic-row">
           <span class="mic-label">灵敏度</span>
@@ -246,12 +241,11 @@
           <span id="tune-oversub-v" class="sub">2.0×</span>
         </div>
         <div class="btn-row">
-          <button id="tune-reset" class="ghost-btn">恢复默认</button>
           <button id="tune-relearn" class="ghost-btn">重学底噪</button>
           <button id="mic-diag-sample" class="ghost-btn">采样指标</button>
           <label class="chk"><input type="checkbox" id="opt-mic-diag" /> 写日志</label>
         </div>
-        <p class="panel-hint" id="mic-diag-text">改动即时生效，逐项单独试最容易定位。</p>
+        <p class="panel-hint" id="mic-diag-text">开启「写日志」后每秒把指标写入 app.log，反馈问题时打开。</p>
       </details>
 
       <details class="panel fold">
