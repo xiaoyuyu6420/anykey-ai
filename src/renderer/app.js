@@ -789,7 +789,7 @@ function bridgeLog(msg, force) {
 let micLevelTimer = null;
 
 // 录音测试状态：录的是「送进虚拟声卡的最终 PCM」= ASR 真正收到的东西
-const rec = { on: false, chunks: [], t0: 0, timer: null };
+const rec = { on: false, chunks: [], bytes: 0, t0: 0, timer: null };
 
 // worklet 模块 URL：主进程经 IPC 转好的 file:// URL（preload 在沙箱里跑，
 // 拿不到 Node 的 path/url 模块，只能由主进程算）。
@@ -930,8 +930,18 @@ async function initMicBridge() {
     }
     // 质量面板用同一批字节——面板显示的就是识别引擎真正收到的信号
     pushQualitySample(bytes);
-    // 录音测试：必须在 transfer 给 worklet 之前复制（transfer 后原 buffer 失效）
-    if (rec.on && rec.chunks.length < 3000) rec.chunks.push(bytes.slice());
+    // 录音测试：必须在 transfer 给 worklet 之前复制（transfer 后原 buffer 失效）。
+    // 按字节硬限制（约 40 秒）——比只靠定时器可靠：定时器在窗口被节流时可能不触发，
+    // 那会让缓冲无限增长，正是「保存时崩掉」最可能的成因。
+    if (rec.on) {
+      if (rec.bytes + bytes.length > 1280000) {
+        rec.on = false;
+        bridgeLog('录音测试：已达 40s 上限，自动停止', true);
+      } else {
+        rec.bytes += bytes.length;
+        rec.chunks.push(bytes.slice());
+      }
+    }
     let peak = 0;
     for (let i = 0; i < bytes.length; i += 2) {
       const a = Math.abs((bytes[i] | (bytes[i + 1] << 8)) << 16 >> 16);
@@ -1274,6 +1284,7 @@ function initTunePanel() {
       if (!rec.on) {
         rec.on = true;
         rec.chunks = [];
+        rec.bytes = 0;
         rec.t0 = Date.now();
         btnRec.textContent = '停止并保存';
         recHint.innerHTML = '正在录音——<b>按住开麦键说一句正常的话</b>，说完点这里保存';
@@ -1287,18 +1298,27 @@ function initTunePanel() {
       const secs = (Date.now() - rec.t0) / 1000;
       const chunks = rec.chunks;
       rec.chunks = [];
+      rec.bytes = 0;
       if (!chunks.length) {
         recHint.textContent = '没录到音频——确认已勾「启用桥接」且按住开麦键说过话。';
         toast('没录到音频', true);
         return;
       }
-      // 拼成一整块 PCM（int16 LE）
+      // 拼成一整块 PCM（int16 LE）→ base64。
+      // 不走「百万元素普通数组」：跨 contextBridge 的大数组深拷贝是性能悬崖，
+      // 且是此前保存时应用异常退出的可疑路径。base64 字符串小且稳。
       let total = 0;
       for (const c of chunks) total += c.length;
       const all = new Uint8Array(total);
       let off = 0;
       for (const c of chunks) { all.set(c, off); off += c.length; }
-      const r = await window.aikey.saveWav(Array.from(all));
+      // 分块转换：String.fromCharCode.apply 参数过多会栈溢出
+      let bin = '';
+      const CH = 0x8000;
+      for (let i = 0; i < all.length; i += CH) {
+        bin += String.fromCharCode.apply(null, all.subarray(i, i + CH));
+      }
+      const r = await window.aikey.saveWav(btoa(bin));
       if (r.ok) {
         recHint.innerHTML = `已保存 <b>${r.seconds}s</b> 音频：${r.path}<br>放来听——人耳清楚就是识别引擎的问题。`;
         toast(`已保存 ${r.seconds}s 录音`);

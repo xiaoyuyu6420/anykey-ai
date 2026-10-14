@@ -784,18 +784,25 @@ ipcMain.handle('mic-worklet-url', () =>
 // 录音测试：把「实际送进 ASR 的音频」存成 WAV，用来判断问题在音频还是在识别引擎
 // 逻辑：人耳听着清楚 → 识别引擎的锅；人耳都费劲 → 音频的锅。
 // 这是唯一能排除「我一直在优化却没人听」这类假设的办法。
-ipcMain.handle('save-wav', async (_e, arr) => {
-  if (!arr || !arr.length) return { ok: false, error: '没有录到音频' };
-  const { dialog } = require('electron');
-  const now = new Date();
-  const p = n => String(n).padStart(2, '0');
-  const r = await dialog.showSaveDialog(win, {
-    defaultPath: `麦克风测试-${p(now.getMonth() + 1)}${p(now.getDate())}-${p(now.getHours())}${p(now.getMinutes())}.wav`,
-    filters: [{ name: 'WAV 音频', extensions: ['wav'] }],
-  });
-  if (r.canceled || !r.filePath) return { ok: false, canceled: true };
+//
+// v0.12.8 加固（用户报告保存时应用直接退出，但未能复现）：
+//   · 去掉了 dialog.showSaveDialog——它是这条路径上唯一的原生 UI，
+//     而「modal 对话框 + 可能被托盘隐藏的父窗口」是已知易出问题的组合；
+//     改为直接写「下载」文件夹，路径回显在面板上。少一个变量就少一种崩溃可能。
+//   · 传输改用 base64 字符串，不再传百万元素的普通数组（大尺寸跨
+//     contextBridge 的深拷贝是已知性能悬崖）。
+//   · 逐步留痕到 app.log：真再崩一次，日志会指出崩在哪一步。
+ipcMain.handle('save-wav', async (_e, b64) => {
+  console.log('[rec] 收到录音数据', typeof b64 === 'string' ? b64.length + ' 字节(base64)' : typeof b64);
   try {
-    const pcm = Buffer.from(Uint8Array.from(arr));
+    if (typeof b64 !== 'string' || !b64) return { ok: false, error: '没有录到音频' };
+    const pcm = Buffer.from(b64, 'base64');
+    if (!pcm.length) return { ok: false, error: '录音数据为空' };
+    const dir = app.getPath('downloads');
+    const now = new Date();
+    const p = n => String(n).padStart(2, '0');
+    const name = `麦克风测试-${p(now.getMonth() + 1)}${p(now.getDate())}-${p(now.getHours())}${p(now.getMinutes())}${p(now.getSeconds())}.wav`;
+    const fp = path.join(dir, name);
     // 标准 44 字节 WAV 头：16kHz / 单声道 / 16bit
     const h = Buffer.alloc(44);
     h.write('RIFF', 0); h.writeUInt32LE(36 + pcm.length, 4); h.write('WAVE', 8);
@@ -803,9 +810,12 @@ ipcMain.handle('save-wav', async (_e, arr) => {
     h.writeUInt16LE(1, 22); h.writeUInt32LE(16000, 24); h.writeUInt32LE(32000, 28);
     h.writeUInt16LE(2, 32); h.writeUInt16LE(16, 34);
     h.write('data', 36); h.writeUInt32LE(pcm.length, 40);
-    fs.writeFileSync(r.filePath, Buffer.concat([h, pcm]));
-    return { ok: true, path: r.filePath, seconds: Math.round(pcm.length / 32000 * 10) / 10 };
+    fs.writeFileSync(fp, Buffer.concat([h, pcm]));
+    const seconds = Math.round(pcm.length / 32000 * 10) / 10;
+    console.log('[rec] 已保存', fp, seconds + 's');
+    return { ok: true, path: fp, seconds };
   } catch (e) {
+    console.log('[rec] 保存失败:', e.message);
     return { ok: false, error: e.message };
   }
 });
