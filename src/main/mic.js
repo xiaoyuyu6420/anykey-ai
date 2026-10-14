@@ -128,8 +128,11 @@ class MicPipeline {
     // 这是「传输层纠错」不是音频处理：即使旁路模式也要开，否则听到的是变调的假原始。
     // inRate=0 或 16000 时不做转换。
     this.inRate = Number(opts.inRate) > 0 ? Number(opts.inRate) : 17129;
-    // 显式传 16000 视为「测试/1:1 模式」：不转换也不校准，保证确定性
-    this.inRateLocked = opts.autoRate === false || Number(opts.inRate) === 16000;
+    // 只有显式 autoRate:false 才禁用自动校准。
+    // 曾把「inRate 恰好传 16000」也当作禁用信号——但 16000 是合法采样率，
+    // 结果是：用户把配置设成 16000 后，切回 17129Hz 的链路也不再校准，
+    // 凭空退回 7% 降调。语义必须分开。
+    this.inRateLocked = opts.autoRate === false;
     this.rc = Math.abs(this.inRate - 16000) > 1 ? new RateConverter(this.inRate, 16000) : null;
     // 自动校准状态：采样率是「链路 + 固件」的属性，不该硬编码。
     // 实测 2.4G 链路是 17129Hz；有线直连可能不同，固件升级也可能变——

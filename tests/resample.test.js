@@ -166,8 +166,10 @@ console.log('[R7] 采样率自动校准（不该硬编码链路速率）');
   ok(p.diagnostics().inRate === 17129, '锁定后仍保留配置值');
 }
 {
-  // 显式 16000 = 1:1 测试模式：不校准、不转换（保证单测确定性）
-  const p = new MicPipeline({ bypass: true, noiseSubtract: false, inRate: 16000 });
+  // 显式 autoRate:false = 不校准（保证单测确定性）。
+  // 注意：不再用「inRate==16000」当禁用信号——16000 是合法采样率，
+  // 那样会让误设成 16000 的用户在 17129Hz 链路上永远得不到校准。
+  const p = new MicPipeline({ bypass: true, noiseSubtract: false, inRate: 16000, autoRate: false });
   const buf = new Int16Array(1000);
   const t0 = Date.now();
   while (Date.now() - t0 < 4200) p.feed(buf, 1000);
