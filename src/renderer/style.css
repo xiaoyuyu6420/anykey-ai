@@ -186,8 +186,29 @@ main { padding: 16px 20px 40px; }
 .modal-key-name { font-weight: 700; font-size: 15px; }
 .modal .key-row { grid-template-columns: 150px 110px 1fr auto; background: rgba(8, 10, 15, .4); }
 
-/* ---------- 顶层页面切换 ---------- */
-.page-nav { display: flex; gap: 16px; border-bottom: 1px solid var(--line-strong); margin-bottom: 14px; }
+/* ---------- 顶层页面切换：两组分层（通用 / RK 深度适配） ---------- */
+.page-nav {
+  display: flex; align-items: flex-end; gap: 28px;
+  border-bottom: 1px solid var(--line-strong); margin-bottom: 14px;
+}
+.page-group { display: flex; flex-direction: column; gap: 1px; }
+.page-group + .page-group {
+  padding-left: 28px; border-left: 1px solid var(--line);
+}
+.page-group-label {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 11px; letter-spacing: .4px; color: var(--muted); opacity: .75;
+}
+.rk-state {
+  font-style: normal; font-size: 10px; padding: 1px 7px; border-radius: 999px;
+  color: var(--muted); background: rgba(255, 255, 255, .04);
+  border: 1px solid var(--line); transition: all .25s var(--ease);
+}
+.rk-state.on {
+  color: var(--ok); background: rgba(62, 207, 142, .09);
+  border-color: rgba(62, 207, 142, .35);
+}
+.page-group-tabs { display: flex; gap: 16px; }
 .page-tab {
   padding: 8px 4px; background: none; border: none; border-bottom: 2px solid transparent;
   color: var(--muted); font-size: 14px; cursor: pointer;
@@ -195,6 +216,19 @@ main { padding: 16px 20px 40px; }
 }
 .page-tab:hover { color: var(--text); }
 .page-tab.active { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
+/* 引导期（等主进程报设备状态）：先不画主区，避免闪一下用不上的 RK 页 */
+body.booting main { visibility: hidden; }
+
+/* RK 未接入时，RK 专属页顶部的说明条（页面仍可预先配置，但不能装作键盘在） */
+.rk-notice {
+  display: flex; align-items: flex-start; gap: 8px;
+  margin: 0 0 12px; padding: 9px 12px;
+  font-size: 12px; line-height: 1.7; color: #f0d8ac;
+  background: rgba(255, 178, 36, .07);
+  border: 1px solid rgba(255, 178, 36, .28);
+  border-radius: var(--radius);
+}
+.rk-notice b { color: var(--warn); font-weight: 600; }
 .hint p { margin: 4px 0; color: var(--muted); font-size: 13px; }
 .hint .sub { opacity: .8; }
 
@@ -218,9 +252,10 @@ main { padding: 16px 20px 40px; }
   gap: 12px; border-bottom: 1px solid var(--line-strong);
 }
 .mode-edit { display: flex; align-items: flex-end; gap: 10px; min-width: 0; }
-.mode-bar-label { font-size: 12px; color: var(--muted); padding-bottom: 9px; white-space: nowrap; }
 .mode-live { display: flex; align-items: center; gap: 8px; padding-bottom: 5px; }
 .mode-warn { font-size: 11.5px; color: var(--warn); }
+/* 键位页：模式行下方的统一说明（解释「编辑哪套键位」与键盘实际模式的关系） */
+p.keys-hint { font-size: 12px; color: var(--muted); line-height: 1.7; margin: 8px 0 12px; }
 .mode-tabs { display: flex; gap: 4px; }
 .mode-tab {
   padding: 7px 20px; border: 1px solid transparent; border-bottom: none; cursor: pointer;
@@ -333,6 +368,8 @@ label.pass-line { display: flex; align-items: center; gap: 6px; color: var(--mut
 .mic-card { padding: 14px 16px; margin-bottom: 16px; }
 .mic-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
 .mic-head h2 { font-size: 14px; font-weight: 600; margin: 0; }
+/* 卡片标题后的小字说明（原来是长卡片 summary 专用的样式，卡片独立成页后要通用化） */
+.mic-head h2 small { color: var(--muted); font-weight: 400; font-size: 12px; margin-left: 6px; }
 .mic-card .sub { font-size: 12px; color: var(--muted); line-height: 1.7; margin: 6px 0 0; }
 
 /* 整卡折叠（与 .panel.fold 同款交互，用在卡片级：收起时只留一行标题+状态）
@@ -646,6 +683,7 @@ button.capturing {
 .stats-opts { display: flex; align-items: center; gap: 14px; color: var(--muted); font-size: 12px; }
 .stats-opts label { cursor: pointer; }
 .stats-opts input[type=number] { width: 52px; padding: 3px 6px; }
+.stats-opts select { padding: 3px 6px; font-size: 12px; }
 .heatmap-title { color: var(--muted); font-size: 12px; margin: 10px 0 6px; }
 .heatmap-title small { opacity: .7; }
 .stats-heatmap { display: flex; flex-direction: column; gap: 4px; }
@@ -708,16 +746,23 @@ button.recording { color: var(--err) !important; border-color: rgba(255, 93, 108
 ::-webkit-scrollbar-track { background: transparent; }
 
 /* ---------- AI 层（任意键盘：触发键 + F1~F12 槽位） ---------- */
-.ailayer-row {
-  display: flex; align-items: center; gap: 8px; margin-bottom: 6px;
+/* 12 个槽位排成自适应两列：单列时右边一大片空白，行也过长不好扫 */
+#ailayer-slots {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 4px 20px; align-items: start; margin-top: 10px;
 }
+.ailayer-cell { min-width: 0; }
+.ailayer-row {
+  display: flex; align-items: center; gap: 8px;
+}
+.ailayer-row > button.ghost-btn { margin-left: auto; } /* 无输入框时不挤在中间 */
 .ailayer-row .ailayer-key {
   flex: 0 0 42px; text-align: center; font-size: 12px; font-weight: 600;
   color: var(--text); background: rgba(8, 10, 15, .65);
   border: 1px solid var(--line); border-radius: 8px; padding: 6px 0;
 }
 .ailayer-row select {
-  flex: 0 0 96px; background: rgba(8, 10, 15, .65); color: var(--text);
+  flex: 0 1 96px; min-width: 76px; background: rgba(8, 10, 15, .65); color: var(--text);
   border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px;
 }
 .ailayer-row select option { background: var(--bg-soft); }
@@ -730,7 +775,7 @@ button.recording { color: var(--err) !important; border-color: rgba(255, 93, 108
 }
 /* AI 直达子行：启动后延时补发快捷键（紧跟所属槽位行） */
 .ailayer-after {
-  display: flex; align-items: center; gap: 8px; margin: -2px 0 8px 50px;
+  display: flex; align-items: center; gap: 8px; margin: 4px 0 2px 50px;
   font-size: 12px; color: var(--text-dim, #8a93a6);
 }
 .ailayer-after input {

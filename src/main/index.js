@@ -411,7 +411,8 @@ function boot() {
     enabled: cfg.settings.fatigueEnabled !== false,
     minutes: Math.max(5, Number(cfg.settings.fatigueMinutes) || 25),
   };
-  stats.counting = cfg.settings.statsEnabled !== false && cfg.settings.remoteStatsPause !== true;
+  stats.counting = false; // 先关：交给 applyStatsCounting 统一判定，避免键盘未接入就误计
+  applyStatsCounting();
   if (cfg.settings.statsEnabled !== false || cfg.settings.soundEnabled) stats.start();
 
   // 打字音效：击键边沿 → 隐藏页播放（窗口仅在启用时创建）
@@ -947,14 +948,17 @@ function createTray() {
   tray.on('double-click', () => showWindow());
 }
 
-// 统计计数开关的统一入口：统计开关 与 远控模式 与 键盘在线 相与。
-// 键盘离线（未发现键盘）= 当前打字来自别的键盘，不计入 RK87 的热力/寿命
+// 统计计数开关的统一入口：统计开关 × 远控模式 × 统计范围。
+// 范围 all（默认，产品定位是「任意键盘」）：系统级键状态检测，谁的按键都算；
+// 范围 rk：只在 RK 键盘在线时计数——键盘离线说明打的是别的键盘，
+// 不计入 RK87 的热力/寿命（旧版的唯一行为，现收窄为用户可选）
 function applyStatsCounting() {
   if (!stats) return;
   const kbOnline = deviceConnected || sessionOnline;
+  const scopeRk = cfg.settings.statsScope === 'rk';
   stats.counting = cfg.settings.statsEnabled !== false
     && cfg.settings.remoteStatsPause !== true
-    && kbOnline;
+    && (!scopeRk || kbOnline);
   // 恢复计数时必须把轮询拉起来：set-settings 路径（statsEnabled/soundEnabled 开关）可能
   // 在 counting=false（键盘离线抖动）期间 stats.stop() 过轮询，此后键盘再上线若无人
   // start，轮询已死、统计永远为 0（2026-09-16 用户实机中招，应用连续运行未重启）。
@@ -1132,7 +1136,8 @@ ipcMain.handle('set-settings', (_e, settings) => {
   if (micPipeline && ('overSub' in settings || 'floorDb' in settings)) {
     micPipeline.setNoiseProfile({ overSub: settings.overSub, floorDb: settings.floorDb });
   }
-  if ('statsEnabled' in settings && stats) {
+  // 统计开关与统计范围同一套生效路径（范围 all/rk 直接决定能不能开始计数）
+  if (('statsEnabled' in settings || 'statsScope' in settings) && stats) {
     applyStatsCounting();
     // 统计关但音效开：轮询保持（keystroke 事件源不能断）；两者都关才停
     if (stats.counting || cfg.settings.soundEnabled) stats.start();

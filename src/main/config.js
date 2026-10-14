@@ -97,6 +97,7 @@ const DEFAULTS = {
     overSub: 2.0,
     floorDb: -18,
     statsEnabled: true,      // 打字统计（只记每键计数与每日总数，纯本地 stats.json）
+    statsScope: 'all',       // 统计范围：all=所有键盘（系统级键状态，任何键盘都算）| rk=仅 RK 键盘接入时计数
     fatigueEnabled: true,    // 疲劳提醒（连续打字满阈值弹系统通知）
     fatigueMinutes: 25,      // 疲劳提醒阈值（分钟）
     soundEnabled: false,     // 打字音效（隐藏页 Web Audio 播放，关闭时窗口不创建零开销）

@@ -15,6 +15,8 @@ const TYPES = [
 
 let state = null; // { keys, bindings, bindingsAi, settings, deviceConnected }
 let currentMode = 'fn'; // 'fn' 普通模式 | 'ai' AI 模式（两套绑定独立配置）
+let currentPage = 'keys'; // 当前顶层页（keys/mic/ailayer/sound/stats）
+let pendingLanding = null; // 通用用户想落地但页面还没就绪（如 ailayer 要等能力探测）
 let macroRecordingRow = null; // 正在录制宏的键行（超时自动停时回填）
 
 init();
@@ -43,6 +45,30 @@ function reasonZh(r) {
   return r.length > 24 ? r.slice(0, 24) + '…' : r;
 }
 
+// ---------- RK 接入状态（全局）：它是「RK 专属页是否与我有关系」的唯一判据 ----------
+// 导航分组标签、RK 页顶部的提示条、模式徽章、统计范围提示都订阅它，
+// 免得各页面各自判断 deviceConnected/sessionOnline 出现不一致的说法。
+let rkOnline = false;
+const rkListeners = [];
+function onRkChange(fn) { rkListeners.push(fn); fn(rkOnline); }
+function setRkOnline(on) {
+  rkOnline = !!on;
+  document.body.classList.toggle('rk-online', rkOnline);
+  const st = document.getElementById('rk-nav-state');
+  if (st) {
+    st.textContent = rkOnline ? '已接入' : '未接入';
+    st.classList.toggle('on', rkOnline);
+  }
+  document.querySelectorAll('.rk-notice').forEach(el => { el.hidden = rkOnline; });
+  for (const fn of rkListeners) {
+    try { fn(rkOnline); } catch (e) { console.warn('[ui] rk 状态订阅者出错', e); }
+  }
+}
+
+// 没接 RK 键盘时主进程报的是「探测中 / 未发现厂商接口」——对通用用户来说
+// 这话等于「你没有这键盘」，说清楚比照抄内部状态好
+const NEUTRAL_OFF = /^(probing|no-cmd-interface)/;
+
 function initStatusPill() {
   const pill = document.getElementById('session-pill');
   const pillText = document.getElementById('session-pill-text');
@@ -61,16 +87,20 @@ function initStatusPill() {
       if (detail.rtt > 0) parts.push(`RTT ${detail.rtt}ms`);
       pillText.textContent = parts.join(' · ');
     } else if (detail.device) {
-      pillText.textContent = '键盘已连接 · 会话离线';
+      pillText.textContent = 'RK 键盘已连接 · 会话离线';
     } else {
-      pillText.textContent = reasonZh(detail.reason) || '键盘未连接';
+      const r = reasonZh(detail.reason);
+      pillText.textContent = (r && !NEUTRAL_OFF.test(detail.reason)) ? r : '未检测到 RK 键盘';
     }
-    pill.title = detail.reason ? `原始状态：${detail.reason}` : '键盘链路状态';
+    pill.title = detail.reason ? `原始状态：${detail.reason}` : 'RK 键盘链路状态';
+    // 重连按钮只在真有链路可重连时出现：没接 RK 键盘的用户不该看见一个按了没反应的按钮
+    btnReconnect.hidden = !up;
+    setRkOnline(up);
   };
   window.aikey.onDeviceStatus(c => { detail.device = !!c; render(); });
   window.aikey.onSessionStatus(on => { detail.online = !!on; render(); });
   window.aikey.onSessionDetail(d => { Object.assign(detail, d); render(); });
-  btnReconnect.hidden = false; // 常显：蓝牙半死（在线但失灵）时 UI 直接重连，不用去托盘找
+  // 链路在但半死（蓝牙假在线 / 有线抢读）时，UI 里直接重连，不用去托盘找
   btnReconnect.onclick = () => {
     btnReconnect.disabled = true;
     btnReconnect.textContent = '重连中…';
@@ -82,6 +112,8 @@ function initStatusPill() {
 }
 
 async function init() {
+  // 兜底：初始化异常也不该让主区一直停在隐藏态（正常路径在 initPageNav 里摘掉）
+  setTimeout(() => document.body.classList.remove('booting'), 1200);
   state = await window.aikey.getState();
 
   initStatusPill();
@@ -137,18 +169,36 @@ async function init() {
   console.log('[ui] init complete', state.profiles ? `档位 x${state.profiles.order.length}` : '');
 }
 
-// ---------- 顶层页面切换（按键映射 / 打字统计） ----------
-function initPageNav() {
-  const tabs = document.querySelectorAll('.page-tab');
-  tabs.forEach(tab => {
-    tab.onclick = () => {
-      if (tab.classList.contains('active')) return;
-      tabs.forEach(t => t.classList.toggle('active', t === tab));
-      document.getElementById('page-keys').hidden = tab.dataset.page !== 'keys';
-      document.getElementById('page-stats').hidden = tab.dataset.page !== 'stats';
-      if (tab.dataset.page === 'stats') { ensureStatsKb(); refreshStats(); } // 切进来立即刷新一次
-    };
+// ---------- 顶层页面切换：通用组（快捷键层/打字音效/打字统计）+ RK 组（键位/语音输入） ----------
+// 两组页面各自独立：每个页面只关心自己那件事，不再在一条长列表里互相干扰。
+// 顶层切换是唯一的显隐入口（别处不要直接改 page-*.hidden，否则 nav 高亮会错位）。
+function selectPage(name) {
+  const tab = document.querySelector(`.page-tab[data-page="${name}"]`);
+  if (!tab || tab.hidden) return false; // 平台不支持（如 mac 没有快捷键层）时切不过去
+  document.querySelectorAll('.page-tab').forEach(t => t.classList.toggle('active', t === tab));
+  document.querySelectorAll('main > div[id^="page-"]').forEach(p => {
+    p.hidden = p.id !== `page-${name}`;
   });
+  currentPage = name;
+  if (name === 'stats') { ensureStatsKb(); refreshStats(); } // 切进来立即刷新一次
+  return true;
+}
+
+function initPageNav() {
+  document.querySelectorAll('.page-tab').forEach(tab => {
+    tab.onclick = () => { pendingLanding = null; selectPage(tab.dataset.page); };
+  });
+  // 接入 RK 键盘 → 落在「键位」；没有 → 落在通用页，别一开机就是一屏用不上的硬件配置
+  const rkUp = !!(state.deviceConnected || state.sessionOnline);
+  if (rkUp) selectPage('keys');
+  else if (!selectPage('ailayer')) {
+    // 快捷键层页能不能显示要等 initAiLayer 探测平台能力：先落打字音效，探测通过后再过去
+    pendingLanding = 'ailayer';
+    selectPage('sound');
+  }
+  // 还在等落地（pendingLanding）就先别揭幕，免得「打字音效」闪一下再跳走；
+  // 真正的揭幕在 initAiLayer 落地完成后，另有 1.2s 兜底
+  if (!pendingLanding) document.body.classList.remove('booting');
 }
 
 // ---------- 模式行：左「正在编辑哪一套键位」 + 右「键盘实际模式」 ----------
@@ -161,6 +211,13 @@ function initModeTabs() {
   const tabs = [...document.querySelectorAll('.mode-tab')];
 
   const paint = () => {
+    // 键盘不在：别显示一个假的「键盘：普通模式」——那是硬件实时状态，没有就直说
+    if (!rkOnline) {
+      badge.textContent = '键盘：未接入';
+      badge.classList.remove('ai');
+      warn.hidden = true;
+      return;
+    }
     const kb = !!state.aiMode;
     badge.textContent = kb ? '键盘：AI 模式' : '键盘：普通模式';
     badge.classList.toggle('ai', kb);
@@ -185,6 +242,7 @@ function initModeTabs() {
   });
   if (state.aiMode) selectTab('ai'); // 启动时键盘已在 AI 模式：直接展示那一套
   paint();
+  onRkChange(paint); // 接入状态变化同样要重画这一行（首次调用由 onRkChange 立即执行）
 
   // 电池徽章（cmd=208 键盘主动上报）
   const bat = document.getElementById('battery-badge');
@@ -1320,17 +1378,32 @@ let aiLayerConfig = null; // 主进程侧规范化后的配置（保存后以返
 
 async function initAiLayer() {
   const card = document.getElementById('ailayer-card');
+  const tab = document.querySelector('.page-tab[data-page="ailayer"]');
   let st;
   try {
     st = await window.aikey.aiLayerOp({ op: 'get' });
   } catch (e) {
-    console.log('[ailayer-ui] 初始化失败（卡片保持隐藏）:', e && e.message);
+    console.log('[ailayer-ui] 初始化失败（页面保持隐藏）:', e && e.message);
+    if (tab) tab.hidden = true;
+    pendingLanding = null;
+    if (currentPage === 'ailayer') selectPage('sound');
+    document.body.classList.remove('booting');
     return;
   }
-  if (!st.supported) return; // 仅 Windows：卡片保持隐藏（RK 完整模式不受影响）
+  // 仅 Windows：不支持的平台整页隐藏，别留一个空标签让人以为坏了
+  if (!st.supported) {
+    card.hidden = true;
+    if (tab) tab.hidden = true;
+    pendingLanding = null;
+    if (currentPage === 'ailayer') selectPage('sound');
+    document.body.classList.remove('booting');
+    return;
+  }
   card.hidden = false;
-  // 已启用则展开（在用的东西不该藏起来），未启用保持收起不占地方
-  card.open = !!(st.config && st.config.enabled);
+  if (tab) tab.hidden = false;
+  // 无 RK 用户开机时想落在快捷键层但被能力探测挡住：页签出来了，补上落地
+  if (pendingLanding) { const to = pendingLanding; pendingLanding = null; selectPage(to); }
+  document.body.classList.remove('booting');
   console.log('[ailayer-ui] 任意键盘扩展卡片已显示，触发键', st.config && st.config.trigger);
   aiLayerConfig = st.config || { enabled: false, trigger: 'ctrlalt', slots: {} };
   const slotKeys = st.slotKeys || [];
@@ -1370,8 +1443,12 @@ async function initAiLayer() {
     slotsEl.innerHTML = '';
     for (const key of slotKeys) {
       const action = (aiLayerConfig.slots && aiLayerConfig.slots[key]) || { type: 'none' };
+      // 每个槽位是一个格子：行 + 可选的「AI 直达」子行，格子排成自适应两列
+      const cell = document.createElement('div');
+      cell.className = 'ailayer-cell';
       const row = document.createElement('div');
       row.className = 'ailayer-row';
+      cell.appendChild(row); // 先把行挂进格子，后面追加的子行才会排在它下面
 
       const name = document.createElement('span');
       name.className = 'ailayer-key';
@@ -1408,8 +1485,7 @@ async function initAiLayer() {
           afterEl.className = 'ailayer-after';
           afterEl.innerHTML = `<span>AI 直达：启动后</span><input type="number" min="0" step="100"/>` +
             `<span>ms 发</span><input type="text" placeholder="快捷键，如 Ctrl+L（留空关闭）"/>`;
-          // 初始渲染时 row 还没挂上 DOM，等循环尾部统一插入
-          if (row.isConnected) slotsEl.insertBefore(afterEl, row.nextSibling);
+          cell.appendChild(afterEl);
         } else if (!need && afterEl) {
           afterEl.remove();
           afterEl = null;
@@ -1448,6 +1524,8 @@ async function initAiLayer() {
       sel.onchange = () => {
         if (!SLOT_TYPES.some(([v]) => v === sel.value)) { sel.value = action.type || 'none'; return; }
         syncInput(); syncAfter(); commit();
+        // 子行是新造的：补一次 onchange 绑定（否则改完延时/快捷键不落盘）
+        if (afterEl) for (const inp of afterEl.querySelectorAll('input')) inp.onchange = commit;
       };
       input.onchange = commit;
       if (afterEl) for (const inp of afterEl.querySelectorAll('input')) inp.onchange = commit;
@@ -1463,8 +1541,7 @@ async function initAiLayer() {
       };
 
       row.append(name, sel, input, btn);
-      slotsEl.appendChild(row);
-      if (afterEl && !afterEl.isConnected) slotsEl.insertBefore(afterEl, row.nextSibling);
+      slotsEl.appendChild(cell);
     }
   }
 
@@ -1521,6 +1598,19 @@ function tkRow(name, count, max, countText) {
   return row;
 }
 
+// 统计范围提示：选「仅 RK 键盘」时把「键盘不在 = 不计」讲明白，
+// 否则用户会以为统计坏了（这正是旧版把统计和键盘绑死却不说的地方）
+function updateStatsScopeHint() {
+  const hint = document.getElementById('stats-scope-hint');
+  if (!hint) return;
+  const scope = (state && state.settings && state.settings.statsScope === 'rk') ? 'rk' : 'all';
+  if (scope !== 'rk') { hint.hidden = true; return; }
+  hint.hidden = false;
+  hint.textContent = rkOnline
+    ? '统计范围：仅 RK 键盘（已接入）——换别的键盘打字不计入。'
+    : '统计范围：仅 RK 键盘，而键盘当前未接入——计数已暂停，接上自动恢复。';
+}
+
 function initStats() {
   const opt = document.getElementById('opt-stats');
   opt.checked = state.settings.statsEnabled !== false;
@@ -1529,6 +1619,18 @@ function initStats() {
     await window.aikey.setSettings({ statsEnabled: opt.checked });
     refreshStats();
   };
+  // 统计范围：通用用户默认「所有键盘」（系统级键状态检测，任何键盘都算）；
+  // RK 用户可收窄成「仅 RK 键盘」——键盘不在时计数暂停，轴体寿命只算这把键盘
+  const scopeSel = document.getElementById('stats-scope');
+  scopeSel.value = state.settings.statsScope === 'rk' ? 'rk' : 'all';
+  scopeSel.onchange = async () => {
+    state.settings.statsScope = scopeSel.value;
+    await window.aikey.setSettings({ statsScope: scopeSel.value });
+    updateStatsScopeHint();
+    refreshStats();
+  };
+  updateStatsScopeHint();
+  onRkChange(updateStatsScopeHint);
   // 远控模式：暂停按键统计与轴体寿命累计（远控转发的按键不算本机实打字）
   const optRemote = document.getElementById('opt-remote');
   optRemote.checked = !!state.settings.remoteStatsPause;

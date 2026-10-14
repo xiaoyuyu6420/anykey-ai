@@ -6,7 +6,9 @@ const fs = require('fs');
 (async () => {
   const out = process.argv[2] || 'shot.png';
   const width = Number(process.argv[3]) || 0;
-  const list = await (await fetch('http://127.0.0.1:9222/json')).json();
+  // CDP_PORT：同一台机器跑多个实例时（如 9222 被正式实例占用）指到开发实例的调试端口
+  const port = Number(process.env.CDP_PORT) || 9222;
+  const list = await (await fetch(`http://127.0.0.1:${port}/json`)).json();
   const page = list.find(p => p.type === 'page');
   if (!page) { console.error('未找到应用页面'); process.exit(1); }
   const ws = new WebSocket(page.webSocketDebuggerUrl);

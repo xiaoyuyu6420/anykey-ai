@@ -5,7 +5,7 @@
   <title>AnyKey AI</title>
   <link rel="stylesheet" href="style.css" />
 </head>
-<body>
+<body class="booting">
   <div class="aurora" aria-hidden="true"><i></i><i></i><i></i></div>
   <header>
     <div class="title">
@@ -22,12 +22,28 @@
   </header>
 
   <main>
+    <!-- 定位分层：左边是任何键盘都能用的通用功能，右边只有接入 RK R87 Pro AI 才有意义。
+         两组在视觉上分开、右边实时标出接入状态——回答「这软件到底给谁用」 -->
     <nav class="page-nav">
-      <button class="page-tab active" data-page="keys">按键映射</button>
-      <button class="page-tab" data-page="stats">打字统计</button>
+      <div class="page-group" data-group="any">
+        <span class="page-group-label">任意键盘 · 通用</span>
+        <div class="page-group-tabs">
+          <button class="page-tab" data-page="ailayer" hidden>快捷键层</button>
+          <button class="page-tab" data-page="sound">打字音效</button>
+          <button class="page-tab" data-page="stats">打字统计</button>
+        </div>
+      </div>
+      <div class="page-group" data-group="rk">
+        <span class="page-group-label">RK R87 Pro AI · 深度适配<i id="rk-nav-state" class="rk-state">检测中…</i></span>
+        <div class="page-group-tabs">
+          <button class="page-tab active" data-page="keys">键位</button>
+          <button class="page-tab" data-page="mic">语音输入</button>
+        </div>
+      </div>
     </nav>
 
     <div id="page-keys">
+      <p class="rk-notice" hidden><b>未检测到 RK R87 Pro AI</b>。这一页配置的是该键盘的硬件键位（AI 键 + F1~F12 + PrtSc 等），接入后自动生效；其它键盘请用上面「任意键盘 · 通用」里的快捷键层。</p>
       <section class="hero" id="hero3d">
         <div class="hero-canvas" id="hero-canvas"></div>
         <div class="hero-title" id="hero-title" aria-hidden="true">
@@ -40,23 +56,17 @@
         </div>
       </section>
 
-      <section class="hint reveal">
-        <p>① 按键盘上的「AI 切换」键切到 AI 模式（F 行白灯亮）→ ② 给键配动作 → ③ 按键即触发。</p>
-        <p class="sub">普通模式 / AI 模式是键盘的两套独立键位，各配各的（tab 上的数字 = 各自已自定义的键数）。按键盘上的键，对应行会闪烁高亮；双击行名可改备注。</p>
-      </section>
-
       <section class="profile-bar reveal">
         <div class="profile-chips" id="profile-chips"></div>
         <span class="sub" id="profile-hint">多套键位一键切换；双击档名重命名</span>
       </section>
 
-      <!-- 这里选的是「编辑哪一套键位」；键盘实际处于哪个模式看右侧徽章（硬件状态，唯一真源）。
-           两者不一致时会给出提示——否则最容易出现「改了不生效」 -->
+      <!-- 「日常 / AI」是键盘的两套独立键位，各配各的；右侧徽章是硬件实际模式。
+           不一致时给出提示——否则最容易出现「改了不生效」 -->
       <section class="mode-bar reveal">
         <div class="mode-edit">
-          <span class="mode-bar-label">正在编辑</span>
           <div class="mode-tabs">
-            <button id="tab-fn" class="mode-tab active" data-mode="fn">普通模式</button>
+            <button id="tab-fn" class="mode-tab active" data-mode="fn">日常</button>
             <button id="tab-ai" class="mode-tab" data-mode="ai">AI 模式</button>
           </div>
         </div>
@@ -66,28 +76,9 @@
         </div>
       </section>
 
-      <div id="key-list"></div>
+      <p class="sub keys-hint">「日常 / AI 模式」是这把键盘的两套独立键位，各配各的（tab 上的数字 = 各自已自定义的键数）；右侧徽章是键盘当前实际模式，不一致时按键盘上的「AI 切换」键切过去才生效。按键盘的键，对应行会闪烁高亮；双击行名可改备注。</p>
 
-      <details class="mic-card reveal fold-card" id="ailayer-card" hidden>
-      <summary>
-        <h2>任意键盘扩展 <small id="ailayer-sub">不接 RK 键盘也能用：按住触发键 + F 键 = 12 个自定义快捷键</small></h2>
-        <span id="ailayer-status" class="badge">未启用</span>
-      </summary>
-      <div class="mic-head">
-        <span class="sub" style="margin:0">给任意键盘（包括 RK 之外的）加一层系统级快捷键，热键由本应用拦截，不会串进当前应用。</span>
-        <label><input type="checkbox" id="opt-ailayer" /> 启用</label>
-      </div>
-      <div class="mic-row">
-        <span class="mic-label">触发键</span>
-        <select id="ailayer-trigger">
-          <option value="ctrlalt">Ctrl+Alt + F1~F12（推荐，不干扰常用快捷键）</option>
-          <option value="alt">Alt + F1~F12（进阶，自动跳过 F4 保留 Alt+F4）</option>
-        </select>
-        <button id="ailayer-preset" class="ghost-btn">Coding 预设</button>
-      </div>
-      <div id="ailayer-slots"></div>
-      <p class="sub">每格可配启动程序 / 网址 / 快捷键 / AI 直达（启动+延时发快捷键唤起输入框）。「Coding 预设」一键填入 Claude / ChatGPT / 语音输入等常用组合，改完即生效；不启用时 F 键保持原样零影响。</p>
-    </details>
+      <div id="key-list"></div>
 
       <section class="mic-card reveal">
       <div class="mic-head">
@@ -98,37 +89,62 @@
       <p class="sub">按前台进程名（exe 名，不区分大小写）自动切换键位档；手动切档后，前台应用不变期间不会被自动接管。仅 Windows 支持自动检测，mac 请用托盘或按键手动切档。</p>
     </section>
 
-      <section class="mic-card reveal" id="mic-card">
-      <div class="mic-head">
-        <h2>键盘麦克风 → 虚拟麦克风</h2>
-        <label><input type="checkbox" id="opt-mic-bridge" /> 启用桥接</label>
-      </div>
+    </div>
 
-      <div class="mic-row">
-        <select id="mic-sink"></select>
-        <button id="mic-refresh" class="ghost-btn">刷新</button>
-        <button id="mic-toggle" class="ghost-btn" disabled>会话离线</button>
-        <span id="mic-state-badge" class="badge">静音</span>
+    <div id="page-ailayer" hidden>
+    <section class="mic-card reveal" id="ailayer-card" hidden>
+      <div class="mic-head">
+        <h2>任意键盘快捷键层 <small id="ailayer-sub">触发键 + F1~F12 = 12 个自定义动作，任何键盘都能用</small></h2>
+        <span id="ailayer-status" class="badge">未启用</span>
       </div>
+      <p class="sub">给任意键盘的 F 区加一层系统级快捷键：热键由本应用拦截，不会串进当前应用。</p>
       <div class="mic-row">
-        <span class="mic-label">说话键</span>
-        <div id="mic-trigger-keys" class="trigger-keys"></div>
-      </div>
-      <p class="sub">按住即开麦，松开即关麦。这 14 个键只在 AI 模式（F 行白灯亮）下才被本应用看到，F10 / F11 例外——它们在普通模式下也是语音键。AI 键 / PrtSc 自身没有系统键码、转发不出去，按下时会改发「第一个普通说话键」的组合（如 Ctrl+F10）：微信输入法照那个组合配，AI 键就同样能用。</p>
-      <div class="mic-row" id="mic-pass-mod-row" hidden>
-        <span class="mic-label">透传修饰键</span>
-        <select id="mic-pass-mod" title="Windows 微信输入法「按住说话」要求快捷键必须含 Ctrl/Alt/Shift，纯 F10 配不进去。选 Ctrl 后在微信里配 Ctrl+F10（透传会合成组合键）。mac 不需要。">
-          <option value="none">无（单键透传）</option>
-          <option value="ctrl">Ctrl</option>
-          <option value="alt">Alt</option>
-          <option value="shift">Shift</option>
+        <span class="mic-label">触发键</span>
+        <select id="ailayer-trigger">
+          <option value="ctrlalt">Ctrl+Alt + F1~F12（推荐，不干扰常用快捷键）</option>
+          <option value="alt">Alt + F1~F12（进阶，自动跳过 F4 保留 Alt+F4）</option>
         </select>
+        <button id="ailayer-preset" class="ghost-btn">Coding 预设</button>
+        <label class="chk"><input type="checkbox" id="opt-ailayer" /> 启用</label>
       </div>
-      <div class="mic-row" id="mic-remote-safe-row" hidden>
-        <span class="mic-label">远控防串键</span>
-        <label><input type="checkbox" id="mic-remote-safe" /> 开启</label>
-      </div>
-      <div class="mic-level"><div id="mic-level-bar"></div></div>
+      <div id="ailayer-slots"></div>
+      <p class="sub">每格可配启动程序 / 网址 / 快捷键 / AI 直达（启动+延时发快捷键唤起输入框）。「Coding 预设」一键填入 Claude / ChatGPT / 语音输入等常用组合，改完即生效；不启用时 F 键保持原样零影响。</p>
+    </section>
+    </div>
+
+    <div id="page-mic" hidden>
+    <p class="rk-notice" hidden><b>未检测到 RK R87 Pro AI</b>。语音输入桥接依赖该键盘的内置麦克风，键盘接入后这里才能开麦；其它键盘请用系统自带语音输入（Win+H）。</p>
+    <section class="mic-card reveal">
+    <div class="mic-head">
+      <h2>键盘麦克风 → 虚拟麦克风</h2>
+      <label><input type="checkbox" id="opt-mic-bridge" /> 启用桥接</label>
+    </div>
+
+    <div class="mic-row">
+      <select id="mic-sink"></select>
+      <button id="mic-refresh" class="ghost-btn">刷新</button>
+      <button id="mic-toggle" class="ghost-btn" disabled>会话离线</button>
+      <span id="mic-state-badge" class="badge">静音</span>
+    </div>
+    <div class="mic-row">
+      <span class="mic-label">说话键</span>
+      <div id="mic-trigger-keys" class="trigger-keys"></div>
+    </div>
+    <p class="sub">按住即开麦，松开即关麦。这 14 个键只在 AI 模式（F 行白灯亮）下才被本应用看到，F10 / F11 例外——它们在普通模式下也是语音键。AI 键 / PrtSc 自身没有系统键码、转发不出去，按下时会改发「第一个普通说话键」的组合（如 Ctrl+F10）：微信输入法照那个组合配，AI 键就同样能用。</p>
+    <div class="mic-row" id="mic-pass-mod-row" hidden>
+      <span class="mic-label">透传修饰键</span>
+      <select id="mic-pass-mod" title="Windows 微信输入法「按住说话」要求快捷键必须含 Ctrl/Alt/Shift，纯 F10 配不进去。选 Ctrl 后在微信里配 Ctrl+F10（透传会合成组合键）。mac 不需要。">
+        <option value="none">无（单键透传）</option>
+        <option value="ctrl">Ctrl</option>
+        <option value="alt">Alt</option>
+        <option value="shift">Shift</option>
+      </select>
+    </div>
+    <div class="mic-row" id="mic-remote-safe-row" hidden>
+      <span class="mic-label">远控防串键</span>
+      <label><input type="checkbox" id="mic-remote-safe" /> 开启</label>
+    </div>
+    <div class="mic-level"><div id="mic-level-bar"></div></div>
 
       <!-- ① 处理方式：整个面板唯一的必选项。选哪个就显示哪个的说明，
            只把「对该档真正生效」的旋钮露出来，避免调了没反应 -->
@@ -254,7 +270,9 @@
         <p class="panel-hint">装虚拟声卡：Windows 用 VB-Cable（vb-audio.com/Cable），macOS 用 BlackHole（<code>brew install blackhole-2ch</code>）。然后勾上面的「启用桥接」，播放设备选 <b>CABLE Input</b> / <b>BlackHole 2ch</b>。最后把系统默认输入设备设成 <b>CABLE Output</b> / <b>BlackHole 2ch</b>——任意软件（微信输入法等）就能把键盘麦克风当麦克风用了。</p>
       </details>
     </section>
+    </div>
 
+    <div id="page-sound" hidden>
     <section class="mic-card reveal">
       <div class="mic-head">
         <h2>打字音效</h2>
@@ -276,7 +294,7 @@
         <span class="mic-label">音量</span>
         <input type="range" id="sound-volume" min="0" max="100" style="flex:1" />
       </div>
-      <p class="sub">打字时播放按键音（内置音色程序合成免版权；选「自定义目录」可放自己喜欢的 wav，随机播放增加变化感）。只对普通打字键生效，修饰键不响；声音数据不出本机。</p>
+      <p class="sub">打字时播放按键音（内置音色程序合成免版权；选「自定义目录」可放自己喜欢的 wav，随机播放增加变化感）。任何键盘都能用；只对普通打字键生效，修饰键不响；声音数据不出本机。</p>
     </section>
     </div>
 
@@ -285,6 +303,12 @@
       <div class="mic-head">
         <h2>打字统计</h2>
         <div class="stats-opts">
+          <label title="统计范围：所有键盘＝任意键盘的按键都计入；仅 RK＝只在 RK 键盘接入时计数（轴体寿命只算这把键盘）">范围
+            <select id="stats-scope">
+              <option value="all">所有键盘</option>
+              <option value="rk">仅 RK 键盘</option>
+            </select>
+          </label>
           <label title="连续打字满阈值弹系统提醒，停笔 1 分钟重新计时">疲劳提醒 <input type="checkbox" id="opt-fatigue" /></label>
           <input type="number" id="fatigue-min" min="5" max="120" step="5" style="width:52px" title="提醒阈值（分钟）" /> 分钟
           <label title="远程操作本机时开启：暂停按键统计与轴体寿命累计（音效不受影响）"><input type="checkbox" id="opt-remote" /> 远控模式</label>
@@ -293,6 +317,7 @@
         </div>
       </div>
       <p class="sub" id="stats-unsupported" hidden>当前平台不支持打字统计</p>
+      <p class="sub" id="stats-scope-hint" hidden></p>
       <div id="stats-body">
         <div class="stats-row1">
           <div class="stats-total">
