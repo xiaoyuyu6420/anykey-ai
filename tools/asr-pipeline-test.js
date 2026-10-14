@@ -8,6 +8,7 @@
 // 参考文本 = 干净音频的识别结果（干净音频可近似为正确答案）。
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 const { makeRecognizer, readWav, transcribe, editDistance } = require('./asr-cer.js');
 
 // 屏蔽真实 dll 加载（与项目单测一致的做法，走 RNNoise 或旁路）——
@@ -72,7 +73,8 @@ const WAVS = ['0.wav', '1.wav'];
 // 真实底噪样本：从用户键盘麦的实录里取纯噪声段（无语音）
 let REAL_NOISE = null;
 function loadRealNoise() {
-  const dir = 'C:\\Users\\67217_rvhs7p2\\Downloads';
+  // 实录样本目录：用 ASR_WAV_DIR 指定，默认取系统「下载」目录
+  const dir = process.env.ASR_WAV_DIR || path.join(os.homedir(), 'Downloads');
   const parts = [];
   for (const tag of ['115250', '115237', '115058']) {
     const f = path.join(dir, `麦克风测试-1014-${tag}.wav`);
