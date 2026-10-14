@@ -110,7 +110,14 @@ class MicPipeline {
     // 这是「传输层纠错」不是音频处理：即使旁路模式也要开，否则听到的是变调的假原始。
     // inRate=0 或 16000 时不做转换。
     this.inRate = Number(opts.inRate) > 0 ? Number(opts.inRate) : 17129;
+    // 显式传 16000 视为「测试/1:1 模式」：不转换也不校准，保证确定性
+    this.inRateLocked = opts.autoRate === false || Number(opts.inRate) === 16000;
     this.rc = Math.abs(this.inRate - 16000) > 1 ? new RateConverter(this.inRate, 16000) : null;
+    // 自动校准状态：采样率是「链路 + 固件」的属性，不该硬编码。
+    // 实测 2.4G 链路是 17129Hz；有线直连可能不同，固件升级也可能变——
+    // 所以按「样本数 ÷ 墙上时钟」实测，异常值不采纳（保留配置值兜底）。
+    this._cal = { samples: 0, t0: 0, done: false };
+    this._calRate = 0;   // 最近一次校准结果（诊断用）
 
     this.hp1 = new Biquad(highpassCoeffs(16000, 100));
     this.hp2 = new Biquad(highpassCoeffs(16000, 100));
@@ -257,6 +264,8 @@ class MicPipeline {
       bypass: !!this.bypass,
       mode: this.mode,
       inRate: this.inRate,
+      inRateMeasured: this._calRate || 0,
+      inRateCalibrated: this._cal.done,
       resampling: !!this.rc,
       snrDb: Math.round(this.snrDb * 10) / 10,
       vad: Math.round(this.vad * 100) / 100,
@@ -313,6 +322,7 @@ class MicPipeline {
       if (this.fifoLen >= FIFO_CAP) break; // 积压保护：丢新保旧
       this.fifo[this.fifoLen++] = src[i];
     }
+    this._autoCalibrate(n);
     let outs = [];
     while (this.fifoLen >= BLOCK) {
       const blk = this.fifo.slice(0, BLOCK);
@@ -387,6 +397,29 @@ class MicPipeline {
     const a = 0.02;
     acc.pre = acc.pre === 0 ? pre : acc.pre * (1 - a) + pre * a;
     acc.post = acc.post === 0 ? post : acc.post * (1 - a) + post * a;
+  }
+
+  // 自动校准输入采样率：累计「原始输入样本数」与墙上时钟，4 秒后算一次。
+  // 偏离 16000 超过 0.5% 就重建转换器；结果落在 14000~19000 之外视为异常，
+  // 保留原值并标记不再重试（避免在坏数据上反复重建）。
+  _autoCalibrate(nInputSamples) {
+    if (this.inRateLocked || this._cal.done) return;
+    const now = Date.now();
+    if (!this._cal.t0) { this._cal.t0 = now; this._cal.samples = 0; return; }
+    this._cal.samples += nInputSamples;
+    const el = (now - this._cal.t0) / 1000;
+    if (el < 4) return;
+    this._cal.done = true;
+    const measured = this._cal.samples / el;
+    this._calRate = Math.round(measured);
+    if (measured >= 14000 && measured <= 19000) {
+      this.inRate = Math.round(measured);
+      this.rc = Math.abs(this.inRate - 16000) > 80 ? new RateConverter(this.inRate, 16000) : null;
+      console.log(`[mic] 自动校准输入采样率: ${this._calRate}Hz（累计 ${this._cal.samples} 样本 / ${el.toFixed(1)}s）` +
+        (this.rc ? ` → 重采样到 16000Hz` : ' → 与 16k 一致，不需转换'));
+    } else {
+      console.log(`[mic] 采样率校准结果异常（${this._calRate}Hz，超出 14k~19k），保留配置值 ${this.inRate}Hz`);
+    }
   }
 
   // 原始直出：唯一的处理是 float→int16 的类型转换与溢出钳制。

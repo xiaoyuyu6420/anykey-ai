@@ -194,8 +194,15 @@ let wiredPcmAccum = null;  // USB 口 PCM 攒批（凑 ≥240 样本再进 pcmBa
 
 function onAudioPacket(buf, opts = {}) {
   try {
-    if (opts.rawPcm) {
-      // USB 口（0x1C 帧）：帧内已是 16kHz int16 PCM，跳过 SBC 解码直接进 DSP 链
+    // 载荷格式按「帧 ID」判定，不依赖会话通道（v0.13.3）。
+    // 旧实现用 session.transport === 'USB' 决定是否当 PCM 读——但键盘可能处在
+    // 2.4G/蓝牙模式、同时用 USB 传命令口，此时音频仍是 0x1B 的 SBC 帧；
+    // 按通道假设分流就会把 SBC 载荷当 int16 PCM 读，直接产生金属般的刺耳杂音。
+    // 帧 ID 是数据自带的、唯一可靠的判据；opts.rawPcm 仅作兜底。
+    const isPcmFrame = buf.length > 0 ? buf[0] === 0x1c : !!opts.rawPcm;
+    const isSbcFrame = buf.length > 0 ? buf[0] === 0x1b : false;
+    if (isPcmFrame) {
+      // 0x1C 帧：帧内已是 16kHz int16 PCM，跳过 SBC 解码直接进 DSP 链
       if (buf.length < 64) return;
       startPsBlocker();
       if (!micPipeline) micPipeline = new MicPipeline();
@@ -210,6 +217,8 @@ function onAudioPacket(buf, opts = {}) {
       return;
     }
     if (buf.length < 62) return;
+    // 既非 0x1C 也非 0x1B，且会话通道也不是无线：格式未知，宁可丢弃也不误读
+    if (!isSbcFrame && !isPcmFrame) return;
     const key = buf[1] * 65536 + buf[2] + buf[3] * 256;
     const now = Date.now();
     audioDedup = audioDedup.filter(e => now - e.ts < 120);

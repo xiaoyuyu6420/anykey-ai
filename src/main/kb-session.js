@@ -81,8 +81,9 @@ class KeySession extends EventEmitter {
     this._audioMark = 0;      // 上次采样的音频包累计（包率监控）
     this._audioLow = 0;       // 连续低包率秒数（链路劣化判定）
     this.pressed = new Set(); // 按键边沿去重
-    this.rx = { std: 0, vendor: 0, audio: 0, other: 0 }; // 收包计数（诊断：区分报文断流 vs 注入失效）
-    this._rxMark = { std: 0, vendor: 0, audio: 0, other: 0 };
+    // rx.audio1b/audio1c 分开计数音频帧格式（0x1B=SBC / 0x1C=原始PCM）
+    this.rx = { std: 0, vendor: 0, audio: 0, audio1b: 0, audio1c: 0, other: 0 };
+    this._rxMark = { std: 0, vendor: 0, audio: 0, audio1b: 0, audio1c: 0, other: 0 };
     this._lastStatTs = Date.now();
     this._writeFail = 0;     // 连续写失败次数（瞬时蓝牙拥塞不立即断线）
     this._openFailStreak = 0; // 连续开口失败（exclusive 撞墙）→ 指数退避
@@ -283,6 +284,7 @@ class KeySession extends EventEmitter {
     if (data[0] === 0x1b) {
       if (data.length < 62) return;
       this.rx.audio++;
+      this.rx.audio1b++;
       this.lastAudioTs = Date.now();
       this.emit('audio', data);
       return;
@@ -292,6 +294,7 @@ class KeySession extends EventEmitter {
     if (data[0] === 0x1c) {
       if (data.length < 64) return;
       this.rx.audio++;
+      this.rx.audio1c++;
       this.lastAudioTs = Date.now();
       this.emit('audio', data);
       return;
@@ -447,7 +450,13 @@ class KeySession extends EventEmitter {
     const diag = kbdInject.getDiag();
     const injOk = diag.postOk - (this._injMark?.ok || 0);
     this._injMark = { ...diag };
-    console.log(`[session] 流量(10s): 标准${d('std')} 厂商${d('vendor')} 音频${d('audio')} | 注入${injOk}${diag.postFail ? ' 异常' + diag.postFail : ''}`);
+    // 音频帧格式分开计数（v0.13.3）：0x1B=SBC(蓝牙/2.4G) / 0x1C=原始PCM(有线)。
+    // 两者载荷格式完全不同，误判会把编码数据当 PCM 读 → 金属般的刺耳杂音。
+    // 只报非零的那一路，避免日常日志噪音
+    const a1b = d('audio1b'), a1c = d('audio1c');
+    const fmt = a1b && a1c ? ` [0x1B:${a1b} 0x1C:${a1c} 混合!]`
+      : a1b ? ` [0x1B SBC]` : a1c ? ` [0x1C PCM]` : '';
+    console.log(`[session] 流量(10s): 标准${d('std')} 厂商${d('vendor')} 音频${d('audio')}${fmt} | 注入${injOk}${diag.postFail ? ' 异常' + diag.postFail : ''}`);
     this._rxMark = { ...this.rx };
     this._lastStatTs = now;
   }

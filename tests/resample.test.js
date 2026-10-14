@@ -121,5 +121,52 @@ console.log('[R6] 管线集成：转换后单位时间产出样本数正确');
   ok(ratio > 1.06 && ratio < 1.08, `样本数比 ${ratio.toFixed(3)}（应≈17129/16000=1.071）——即未转换时会多播 ${((ratio - 1) * 100).toFixed(1)}% 的时长`);
 }
 
+console.log('[R7] 采样率自动校准（不该硬编码链路速率）');
+{
+  // 以「真实 17129Hz」的节奏喂 ~4.3 秒数据，校准应测出接近值并采用。
+  // 这条守的是：采样率是「链路+固件」的属性，换有线/换固件都可能不同，
+  // 硬编码会在别的链路上引入新的降调。
+  const p = new MicPipeline({ bypass: true, noiseSubtract: false, inRate: 17129 });
+  const rate = 17129;
+  const perTick = Math.round(rate / 20);          // 每 50ms 喂一次
+  const buf = new Int16Array(perTick);
+  const t0 = Date.now();
+  let tick = 0;
+  while (Date.now() - t0 < 4300) {
+    for (let i = 0; i < perTick; i++) buf[i] = Math.round(1500 * Math.sin(2 * Math.PI * 440 * (tick * perTick + i) / rate));
+    tick++;
+    p.feed(buf, perTick);
+    const target = t0 + tick * 50;
+    const wait = target - Date.now();
+    if (wait > 0) { const end = Date.now() + wait; while (Date.now() < end) { /* 忙等，保证节奏贴近真实 */ } }
+  }
+  const d = p.diagnostics();
+  ok(d.inRateCalibrated === true, '4 秒后已执行校准');
+  ok(Math.abs(d.inRateMeasured - rate) / rate < 0.15,
+    `测出 ${d.inRateMeasured}Hz（真实 ${rate}，误差 ${((d.inRateMeasured / rate - 1) * 100).toFixed(1)}%）`);
+  ok(d.resampling === true, '校准后仍启用重采样（17k≠16k）');
+}
+{
+  // 异常值不采纳：瞬间灌入海量样本 → 测得速率远超合理范围 → 保留配置值
+  const p = new MicPipeline({ bypass: true, noiseSubtract: false, inRate: 17129 });
+  const buf = new Int16Array(2000);
+  const t0 = Date.now();
+  while (Date.now() - t0 < 4200) p.feed(buf, 2000);
+  const d = p.diagnostics();
+  ok(d.inRateCalibrated === true, '执行了校准');
+  ok(d.inRateMeasured > 19000, `测得异常高速率 ${d.inRateMeasured}Hz`);
+  ok(d.inRate === 17129, `异常值未采纳，保留配置值 ${d.inRate}Hz`);
+}
+{
+  // 显式 16000 = 1:1 测试模式：不校准、不转换（保证单测确定性）
+  const p = new MicPipeline({ bypass: true, noiseSubtract: false, inRate: 16000 });
+  const buf = new Int16Array(1000);
+  const t0 = Date.now();
+  while (Date.now() - t0 < 4200) p.feed(buf, 1000);
+  const d = p.diagnostics();
+  ok(d.inRateCalibrated === false, '1:1 模式下不触发校准');
+  ok(d.resampling === false, '1:1 模式下不启用重采样');
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
