@@ -69,11 +69,33 @@ const MODEL_DIR = path.join(__dirname, 'asr-model', 'sherpa-onnx-paraformer-zh-s
 const WAV_DIR = path.join(MODEL_DIR, 'test_wavs');
 const WAVS = ['0.wav', '1.wav'];
 
+// 真实底噪样本：从用户键盘麦的实录里取纯噪声段（无语音）
+let REAL_NOISE = null;
+function loadRealNoise() {
+  const dir = 'C:\\Users\\67217_rvhs7p2\\Downloads';
+  const parts = [];
+  for (const tag of ['115250', '115237', '115058']) {
+    const f = path.join(dir, `麦克风测试-1014-${tag}.wav`);
+    if (fs.existsSync(f)) parts.push(readWav(f).samples);
+  }
+  if (!parts.length) return null;
+  const total = parts.reduce((s, p) => s + p.length, 0);
+  const all = new Float32Array(total);
+  let off = 0;
+  for (const p of parts) { all.set(p, off); off += p.length; }
+  return all;
+}
+
 (async () => {
   const ENGINE = process.argv[2] || 'paraformer';
-  const NOISE = process.argv[3] || 'lf';    // lf 稳态低频 / click 脉冲敲键 / white 宽带
+  const NOISE = process.argv[3] || 'lf';    // lf 稳态低频 / click 脉冲敲键 / white 宽带 / real 实录底噪
   const { rec } = makeRecognizer(ENGINE);
   console.log(`ASR 引擎: ${ENGINE}   噪声类型: ${NOISE}`);
+  if (NOISE === 'real') {
+    REAL_NOISE = loadRealNoise();
+    if (!REAL_NOISE) { console.log('找不到实录噪声样本'); process.exit(1); }
+    console.log(`实录底噪样本: ${(REAL_NOISE.length / 16000).toFixed(1)}s（键盘麦实测、无语音段）`);
+  }
 
   // 参考文本
   const cleanMap = new Map();
@@ -142,6 +164,14 @@ const WAVS = ['0.wav', '1.wav'];
             }
           } else if (NOISE === 'white') {
             nz = white;
+          } else if (NOISE === 'real') {
+            // 用**键盘麦实录的纯噪声**替代合成噪声：保真度最高——
+            // 频谱、时域起伏、非稳态成分都是这台设备的真实特性。
+            // 合成噪声只按「低频为主」近似，可能漏掉真实噪声里的
+            // 非稳态成分（而那正是神经网络降噪该发挥价值的地方）。
+            nz = new Float32Array(white.length);
+            const srcN = REAL_NOISE;
+            for (let i = 0; i < nz.length; i++) nz[i] = srcN[(i + seed * 7919) % srcN.length];
           } else {
             nz = shelf(white, 1500, -6);
           }
