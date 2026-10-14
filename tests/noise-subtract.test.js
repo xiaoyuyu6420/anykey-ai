@@ -17,7 +17,7 @@ let pass = 0, fail = 0;
 const ok = (c, n) => { c ? (pass++, console.log('  ✓', n)) : (fail++, console.log('  ✗ FAIL:', n)); };
 
 const { NoiseSubtractor } = require('../src/main/noise-profile.js');
-const { AutoTuner, scoreOf } = require('../src/main/auto-tuner.js');
+const { AutoTuner, scoreOf, DEFAULT_GRID } = require('../src/main/auto-tuner.js');
 const BLOCK = 160;
 
 // 确定性伪随机（保证测试可复现）
@@ -149,39 +149,73 @@ const rms = a => Math.sqrt(a.reduce((s, v) => s + v * v, 0) / a.length);
     ok(d.learned === 0 && d.ready === false && d.learning === true, 'reset 后回到学习期');
   }
 
-  console.log('[A1] 打分函数');
+  console.log('[A1] 打分函数——必须对「不降噪」和「过度降噪」双向惩罚');
   {
-    const good = scoreOf({ snrDb: 20, level: 3000, gate: 1, gain: 4, clipRate: 0 });
-    const bad = scoreOf({ snrDb: 3, level: 200, gate: 0.1, gain: 1, clipRate: 0 });
-    const clip = scoreOf({ snrDb: 20, level: 3000, gate: 1, gain: 4, clipRate: 0.3 });
-    ok(good > bad, `好配置分更高（${good.toFixed(2)} > ${bad.toFixed(2)}）`);
-    ok(clip < good, `削波扣分（${clip.toFixed(2)} < ${good.toFixed(2)}）`);
+    // 探针数据形状：静音段=底噪残余，语音段=人声+底噪残余
+    const withProbe = (spPost, siPost, level = 3000, clipRate = 0) => ({
+      level, clipRate,
+      probe: {
+        speech: { pre: 500, post: spPost, cutDb: 0, samples: 60 },
+        silence: { pre: 150, post: siPost, cutDb: 0, samples: 60 },
+      },
+    });
+    // 好：降噪到位（底噪 12、人声 300 → 输出 SNR ≈28dB）
+    const good = scoreOf(withProbe(300, 12));
+    // 坏1：几乎不降噪（底噪残留 120、人声 300 → SNR ≈8dB），但电平被拉满
+    const noDenoise = scoreOf(withProbe(300, 120, 7000));
+    // 坏2：过度降噪（连人声一起削 → 底噪 12、人声 25 → SNR ≈6dB）
+    const overDenoise = scoreOf(withProbe(25, 12, 3000));
+    ok(good > noDenoise, `降噪到位 优于 不降噪（${good.toFixed(2)} > ${noDenoise.toFixed(2)}）`);
+    ok(good > overDenoise, `降噪到位 优于 过度降噪（${good.toFixed(2)} > ${overDenoise.toFixed(2)}）`);
+    ok(noDenoise < good, '「少降噪+拉满电平」不能靠电平蒙混过关（这是 v0.12.5 的 bug）');
     ok(scoreOf(null) === -Infinity, 'null → -Infinity');
+    // 采样不足 → 不给 SNR 分（低分），促使调参器继续等有效数据
+    const fewSamples = scoreOf({
+      level: 3000, clipRate: 0,
+      probe: { speech: { pre: 500, post: 300, cutDb: 0, samples: 3 }, silence: { pre: 150, post: 12, cutDb: 0, samples: 3 } },
+    });
+    ok(fewSamples < good, `样本不足时分数低（${fewSamples.toFixed(2)} < ${good.toFixed(2)}）`);
+    // 电平过低扣分
+    const tooQuiet = scoreOf(withProbe(300, 12, 100));
+    ok(tooQuiet < good, `电平过低（100）低于正常（${tooQuiet.toFixed(2)} < ${good.toFixed(2)}）`);
   }
 
   console.log('[A2] 坐标下降收敛到更优组合');
   {
-    // 假管线：metrics 由 tune 的「理想值」驱动——越接近 target 分数越高
-    const target = { attenLimDb: 2, gateRelease: 0.25, gateOpenMul: 3, agcTarget: 3600, agcMaxGain: 8 };
+    // 假管线：输出 SNR 由 tune 与「理想值」的距离决定——越接近理想，信噪比越高。
+    // 这模拟真实世界的相关性：参数合适 → 降噪与保人声平衡 → SNR 高。
+    const ideal = { attenLimDb: 6, gateRelease: 0.25, gateOpenMul: 3, agcTarget: 3600, agcMaxGain: 32 };
     const fake = {
-      tune: { attenLimDb: 6, gateRelease: 0.04, gateOpenMul: 5, agcTarget: 4200, agcMaxGain: 8 },
-      _st: null,
+      tune: { attenLimDb: 2, gateRelease: 0.8, gateOpenMul: 4, agcTarget: 2400, agcMaxGain: 8 },
+      _reset: 0,
       setTune(p) { Object.assign(this.tune, p); return this.tune; },
+      resetProbe() { this._reset++; },
       diagnostics() {
-        // 距离 target 越近，SNR 越高（模拟真实相关性）
         let d = 0;
-        for (const k of Object.keys(target)) d += Math.abs(Math.log((this.tune[k] + 1) / (target[k] + 1)));
-        return { snrDb: Math.max(0, 25 - d * 8), level: 3000, gate: 1, gain: this.tune.agcMaxGain / 2, clipRate: 0 };
+        for (const k of Object.keys(ideal)) d += Math.abs(Math.log((this.tune[k] + 1) / (ideal[k] + 1)));
+        const snr = Math.max(2, 26 - d * 9);
+        // probe.post 构造出指定 SNR：静音段固定 12，语音段按 SNR 反推
+        return {
+          level: 3000, clipRate: 0,
+          probe: {
+            speech: { pre: 500, post: Math.round(12 * Math.pow(10, snr / 20)), cutDb: 0, samples: 60 },
+            silence: { pre: 150, post: 12, cutDb: 0, samples: 60 },
+          },
+        };
       },
     };
     const tuner = new AutoTuner(fake, { sampleMs: 1 });
     const prog = await tuner.start();
     ok(prog.stage === 'done', `跑完（${prog.stage}）`);
     ok(prog.score > prog.baseline.score, `分数提升（${prog.baseline.score} → ${prog.score}）`);
-    ok(fake.tune.attenLimDb === 2, `attenLim 收敛到 ${fake.tune.attenLimDb}（目标 2）`);
-    ok(fake.tune.gateRelease === 0.25, `gateRelease 收敛到 ${fake.tune.gateRelease}（目标 0.25）`);
-    ok(fake.tune.gateOpenMul === 3, `gateOpenMul 收敛到 ${fake.tune.gateOpenMul}（目标 3）`);
-    ok(fake.tune.agcTarget === 3600, `agcTarget 收敛到 ${fake.tune.agcTarget}（目标 3600）`);
+    ok(prog.lastSnr > 15, `输出 SNR 达到 ${prog.lastSnr}dB`);
+    ok(fake.tune.attenLimDb === 6, `attenLim 收敛到 ${fake.tune.attenLimDb}（理想 6）`);
+    ok(fake.tune.gateOpenMul === 3, `gateOpenMul 收敛到 ${fake.tune.gateOpenMul}（理想 3）`);
+    ok(fake.tune.agcTarget === 3600, `agcTarget 收敛到 ${fake.tune.agcTarget}（理想 3600）`);
+    ok(fake.tune.agcMaxGain === 32, `agcMaxGain 收敛到 ${fake.tune.agcMaxGain}（理想 32）`);
+    ok(fake._reset > 5, `每档都重置探针（${fake._reset} 次），不读历史累积值`);
+    // 网格不得含 attenLim=0（libdf 里 0 是「无限制」，破坏单调性）
+    ok(!DEFAULT_GRID.attenLimDb.includes(0), 'attenLim 网格不含 0（libdf 陷阱）');
   }
 
   console.log('[A3] 取消与回滚');
@@ -189,7 +223,16 @@ const rms = a => Math.sqrt(a.reduce((s, v) => s + v * v, 0) / a.length);
     const fake = {
       tune: { attenLimDb: 3, gateRelease: 0.25, gateOpenMul: 3, agcTarget: 3600, agcMaxGain: 8 },
       setTune(p) { Object.assign(this.tune, p); return this.tune; },
-      diagnostics() { return { snrDb: 15, level: 3000, gate: 1, gain: 2, clipRate: 0 }; },
+      resetProbe() {},
+      diagnostics() {
+        return {
+          level: 3000, clipRate: 0,
+          probe: {
+            speech: { pre: 500, post: 150, cutDb: 0, samples: 60 },
+            silence: { pre: 150, post: 12, cutDb: 0, samples: 60 },
+          },
+        };
+      },
     };
     const tuner = new AutoTuner(fake, { sampleMs: 1 });
     const p = tuner.start();

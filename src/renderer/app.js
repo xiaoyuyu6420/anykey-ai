@@ -1032,63 +1032,123 @@ async function initMicBridge() {
   initTunePanel();
 }
 
+// ---------- 识别质量：预设 + 一键优化 ----------
+// 用户不需要理解 attenLim/gateRelease 这些内部名字，只需要选「我在什么场景说话」。
+// 每个预设是一组实测过的参数组合；专家滑块收在折叠区里。
+const MIC_PRESETS = {
+  normal: {
+    label: '正常使用',
+    hint: '日常距离（30~50cm）说话。降噪与人声保留的平衡点，实测 6dB 降噪量最佳。',
+    tune: { attenLimDb: 6, gateRelease: 0.25, gateOpenMul: 3, agcTarget: 3600, agcMaxGain: 32, gateFloor: 0.05 },
+  },
+  far: {
+    label: '离得远 / 环境吵',
+    hint: '加强降噪 + 更大增益 + 更灵敏的语音判定。代价是环境噪声更容易被当成语音。',
+    tune: { attenLimDb: 10, gateRelease: 0.25, gateOpenMul: 2, agcTarget: 4200, agcMaxGain: 64, gateFloor: 0.05 },
+  },
+  quiet: {
+    label: '环境安静',
+    hint: '降噪更温和，保留更多咬字细节，适合安静房间近距离说话。',
+    tune: { attenLimDb: 4, gateRelease: 0.35, gateOpenMul: 4, agcTarget: 3000, agcMaxGain: 16, gateFloor: 0.05 },
+  },
+};
+
+// 判断当前参数最接近哪个预设（用于高亮）
+function matchPreset(tune) {
+  if (!tune) return null;
+  for (const [key, p] of Object.entries(MIC_PRESETS)) {
+    const same = Object.keys(p.tune).every(k => Math.abs((tune[k] ?? 0) - p.tune[k]) < 1e-6);
+    if (same) return key;
+  }
+  return null;
+}
+
 // ---------- 识别质量调参面板 ----------
 // 每项独立即时生效（set-settings → setTune），方便逐项 A/B 定位问题：
 // 改了听感不对就退一格，不影响其他项。体检开关走主进程 [diag] 落盘日志。
 function initTunePanel() {
   const box = document.getElementById('mic-tune-box');
   if (!box) return;
-  const d = state.settings.micTune || {};
-  const def = { gateRelease: 0.25, agcTarget: 3600, attenLimDb: 3, agcMaxGain: 8 };
-  const cur = { ...def, ...d };
+  const def = MIC_PRESETS.normal.tune;
+  const cur = { ...def, ...(state.settings.micTune || {}) };
 
   const elAtten = document.getElementById('tune-atten');
   const elRel = document.getElementById('tune-release');
   const elAgc = document.getElementById('tune-agc');
   const elGain = document.getElementById('tune-maxgain');
+  const elSens = document.getElementById('tune-sens');
   const elDiag = document.getElementById('opt-mic-diag');
   const btnSample = document.getElementById('mic-diag-sample');
   const txtDiag = document.getElementById('mic-diag-text');
   const btnReset = document.getElementById('tune-reset');
+  const presetHint = document.getElementById('preset-hint');
+  const presetBtns = Array.from(document.querySelectorAll('.preset-btn'));
 
   const labels = {
-    'tune-atten': document.getElementById('tune-atten-v'),
-    'tune-release': document.getElementById('tune-release-v'),
-    'tune-agc': document.getElementById('tune-agc-v'),
-    'tune-maxgain': document.getElementById('tune-maxgain-v'),
+    atten: document.getElementById('tune-atten-v'),
+    release: document.getElementById('tune-release-v'),
+    agc: document.getElementById('tune-agc-v'),
+    maxgain: document.getElementById('tune-maxgain-v'),
+    sens: document.getElementById('tune-sens-v'),
   };
+  // 灵敏度滑块呈现为「底噪的几倍」，比 gateOpenMul 这个名字好懂
   const paint = () => {
-    labels['tune-atten'].textContent = elAtten.value + ' dB';
-    labels['tune-release'].textContent = (elRel.value / 100).toFixed(2);
-    labels['tune-agc'].textContent = elAgc.value;
-    labels['tune-maxgain'].textContent = elGain.value + '×';
+    labels.atten.textContent = elAtten.value + ' dB';
+    labels.release.textContent = (elRel.value / 100).toFixed(2);
+    labels.agc.textContent = elAgc.value;
+    labels.maxgain.textContent = elGain.value;
+    labels.sens.textContent = (elSens.value / 10).toFixed(1) + '×';
+  };
+  const highlightPreset = () => {
+    const key = matchPreset(cur);
+    for (const b of presetBtns) b.classList.toggle('on', b.dataset.preset === key);
+    return key;
   };
   const syncInputs = () => {
     elAtten.value = cur.attenLimDb;
     elRel.value = Math.round(cur.gateRelease * 100);
     elAgc.value = cur.agcTarget;
     elGain.value = cur.agcMaxGain;
+    elSens.value = Math.round((cur.gateOpenMul ?? 3) * 10);
     paint();
+    highlightPreset();
   };
-
-  elAtten.value = cur.attenLimDb;
-  elRel.value = Math.round(cur.gateRelease * 100);
-  elAgc.value = cur.agcTarget;
-  elGain.value = cur.agcMaxGain;
+  syncInputs();
   elDiag.checked = !!state.settings.micDiag;
-  paint();
 
-  const push = async () => {
-    cur.attenLimDb = Number(elAtten.value);
-    cur.gateRelease = Number(elRel.value) / 100;
-    cur.agcTarget = Number(elAgc.value);
-    cur.agcMaxGain = Number(elGain.value);
+  const applyTune = async (tune, note) => {
+    Object.assign(cur, tune);
     state.settings.micTune = { ...cur };
     await window.aikey.setSettings({ micTune: { ...cur } });
+    syncInputs();
+    if (note) presetHint.textContent = note;
   };
-  for (const el of [elAtten, elRel, elAgc, elGain]) {
+
+  const push = async () => {
+    Object.assign(cur, {
+      attenLimDb: Number(elAtten.value),
+      gateRelease: Number(elRel.value) / 100,
+      agcTarget: Number(elAgc.value),
+      agcMaxGain: Number(elGain.value),
+      gateOpenMul: Number(elSens.value) / 10,
+    });
+    state.settings.micTune = { ...cur };
+    await window.aikey.setSettings({ micTune: { ...cur } });
+    highlightPreset(); // 手动改过后预设高亮消失 = 已自定义
+  };
+  for (const el of [elAtten, elRel, elAgc, elGain, elSens]) {
     el.oninput = paint;
     el.onchange = push;
+  }
+
+  // ---- 预设：一句话选场景，不用理解参数名 ----
+  for (const b of presetBtns) {
+    b.onclick = () => {
+      const p = MIC_PRESETS[b.dataset.preset];
+      if (!p) return;
+      applyTune(p.tune, `${p.label}：${p.hint}`);
+      toast(`已切换到「${p.label}」`);
+    };
   }
 
   elDiag.onchange = async () => {
@@ -1108,10 +1168,7 @@ function initTunePanel() {
   };
 
   btnReset.onclick = async () => {
-    Object.assign(cur, def);
-    syncInputs();
-    state.settings.micTune = { ...cur };
-    await window.aikey.setSettings({ micTune: { ...cur } });
+    await applyTune(def, '已恢复默认（正常使用）。');
     toast('已恢复默认参数');
   };
 
@@ -1138,38 +1195,39 @@ function initTunePanel() {
     toast(r ? '已重置，请静音约 1 秒重新学习' : '稳态底噪扣除未启用', !r);
   };
 
-  // ---- 自动调参（闭环搜索）----
+  // ---- 一键自动优化（闭环搜索）----
   const btnAuto = document.getElementById('autotune-run');
   const btnAutoRb = document.getElementById('autotune-rollback');
   const autoStatus = document.getElementById('autotune-status');
   let autoPoll = null;
+  const idleText = () => { autoStatus.innerHTML = '点了之后<b>一直按住说话键说话</b>约 2 分钟，它自己找最佳设置'; };
   const pollAuto = async () => {
     try {
       const p = await window.aikey.autotuneStatus();
       if (!p) return;
-      const stageText = {
-        idle: '逐参数自动搜索最优档位',
-        baseline: '采基线中…',
-        trial: `测试 ${p.param} 第 ${p.trial}/${p.totalTrials} 档`,
-        done: `完成：分数 ${p.baseline?.score} → ${p.score}`,
-        cancelled: '已取消',
-      };
-      autoStatus.textContent = stageText[p.stage] || p.stage;
+      if (p.stage === 'baseline') {
+        autoStatus.textContent = '正在测量当前设置…（请说话）';
+      } else if (p.stage === 'trial') {
+        autoStatus.textContent = `正在试第 ${p.trial}/${p.totalTrials} 种设置…（请继续说话）` +
+          (p.lastSnr != null ? `　当前信噪比 ${p.lastSnr}dB` : '');
+      } else if (p.stage === 'done') {
+        autoStatus.textContent = `优化完成：信噪比 ${p.lastSnr}dB（分数 ${p.baseline?.score} → ${p.score}）`;
+      } else if (p.stage === 'cancelled') {
+        autoStatus.textContent = '已停止（参数保持当前值）';
+      }
       if (p.stage === 'done' || p.stage === 'cancelled') {
         if (autoPoll) { clearInterval(autoPoll); autoPoll = null; }
-        btnAuto.textContent = '开始自动调参';
+        btnAuto.textContent = '一键自动优化';
+        btnAuto.classList.remove('running');
         if (p.stage === 'done') {
-          toast(`自动调参完成，分数 ${p.baseline?.score} → ${p.score}`);
-          // 参数已改，刷新滑块与状态
+          toast(`优化完成，信噪比 ${p.lastSnr}dB`);
           const fresh = await window.aikey.micDiagnostics();
           if (fresh && fresh.tune) {
-            cur.attenLimDb = fresh.tune.attenLimDb;
-            cur.gateRelease = fresh.tune.gateRelease;
-            cur.agcTarget = fresh.tune.agcTarget;
-            cur.agcMaxGain = fresh.tune.agcMaxGain;
-            syncInputs();
+            Object.assign(cur, fresh.tune);
             state.settings.micTune = { ...cur };
+            syncInputs();
           }
+          presetHint.textContent = `已优化到最适合你当前环境的设置（信噪比 ${p.lastSnr}dB）。不满意就点「撤销」。`;
         }
       }
     } catch (_) {}
@@ -1178,26 +1236,29 @@ function initTunePanel() {
     if (autoPoll) {
       await window.aikey.autotuneCancel();
       clearInterval(autoPoll); autoPoll = null;
-      btnAuto.textContent = '开始自动调参';
+      btnAuto.textContent = '一键自动优化';
+      btnAuto.classList.remove('running');
       return;
     }
-    const r = await window.aikey.autotuneStart({ sampleMs: 4000 });
+    const r = await window.aikey.autotuneStart({});
     if (!r.ok) { toast(r.error || '启动失败', true); return; }
-    btnAuto.textContent = '停止调参';
-    toast('已开始——请持续说话，让它采到真实语音');
+    btnAuto.textContent = '停止优化';
+    btnAuto.classList.add('running');
+    autoStatus.textContent = '开始测量——请一直按住说话键说话，中途别停太久';
+    toast('已开始自动优化，请持续说话约 2 分钟');
     autoPoll = setInterval(pollAuto, 500);
     pollAuto();
   };
   btnAutoRb.onclick = async () => {
     const r = await window.aikey.autotuneRollback();
     if (r.ok && r.tune) {
-      cur.attenLimDb = r.tune.attenLimDb; cur.gateRelease = r.tune.gateRelease;
-      cur.agcTarget = r.tune.agcTarget; cur.agcMaxGain = r.tune.agcMaxGain;
-      syncInputs();
+      Object.assign(cur, r.tune);
       state.settings.micTune = { ...cur };
+      syncInputs();
       await window.aikey.setSettings({ micTune: { ...cur } });
-      toast('已回滚到调参前的参数');
-    } else toast('无可回滚的记录', true);
+      presetHint.textContent = '已撤销到优化前的设置。';
+      toast('已撤销');
+    } else toast('还没有可撤销的优化记录', true);
   };
 }
 

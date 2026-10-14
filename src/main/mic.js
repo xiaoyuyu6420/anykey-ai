@@ -345,6 +345,13 @@ class MicPipeline {
     acc.post = acc.post === 0 ? post : acc.post * (1 - a) + post * a;
   }
 
+  // 重置探针统计。调参器每试一档参数前调用——否则读到的是历史累积值，
+  // 分不清「这一档的效果」和「之前所有档位的平均」
+  resetProbe() {
+    this._probeSilence = { pre: 0, post: 0, n: 0, m: 0 };
+    this._probeSpeech = { pre: 0, post: 0, n: 0, m: 0 };
+  }
+
   // 探针读数 + 判读结论
   probeReport() {
     const s = this._probeSilence, v = this._probeSpeech;

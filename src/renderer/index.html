@@ -183,39 +183,59 @@
         <p class="qc-hint" id="diag-advice">按住开麦键说几句话、再静音几秒，面板会自动采样并给出判读。</p>
       </div>
 
+      <div class="tune-simple">
+        <div class="tune-hero">
+          <button id="autotune-run" class="primary-btn">一键自动优化</button>
+          <button id="autotune-rollback" class="ghost-btn">撤销</button>
+          <span id="autotune-status" class="sub">点了之后<b>一直按住说话键说话</b>约 2 分钟，它自己找最佳设置</span>
+        </div>
+        <div class="tune-presets">
+          <span class="mic-label">或者直接选：</span>
+          <button class="preset-btn" data-preset="normal">正常使用<br><i>推荐</i></button>
+          <button class="preset-btn" data-preset="far">离得远 / 环境吵<br><i>加强降噪与音量</i></button>
+          <button class="preset-btn" data-preset="quiet">环境安静<br><i>声音更自然</i></button>
+        </div>
+        <p class="qc-hint" id="preset-hint">不确定就点「一键自动优化」，或者先试「正常使用」。</p>
+      </div>
+
       <details id="mic-tune-box">
-        <summary>识别质量调参（远距说话 / 交叉验证用）</summary>
+        <summary>手动微调（不熟悉就别动，先用上面的按钮）</summary>
         <div class="mic-row">
           <span class="mic-label"><label><input type="checkbox" id="opt-mic-diag" /> 链路体检</label></span>
-          <span class="sub">每秒把 SNR/底噪/门控/增益/电平写入 app.log 的 [diag] 行。调参前后各开一次对比。</span>
+          <span class="sub">每秒把指标写入日志，排查问题时开。</span>
         </div>
         <div class="mic-row">
           <span class="mic-label">当前指标</span>
           <span id="mic-diag-text" class="sub">点右侧按钮采样</span>
           <button id="mic-diag-sample" class="ghost-btn">采样</button>
-        </div>        <div class="mic-row">
-          <span class="mic-label">降噪强度</span>
-          <input type="range" id="tune-atten" min="0" max="12" step="1" />
-          <span id="tune-atten-v" class="sub">3 dB</span>
         </div>
         <div class="mic-row">
-          <span class="mic-label">门控释放</span>
+          <span class="mic-label" title="越大降噪越强。太弱压不住底噪，太强会把人声咬字也削掉">降噪强度</span>
+          <input type="range" id="tune-atten" min="1" max="16" step="1" />
+          <span id="tune-atten-v" class="sub">6 dB</span>
+        </div>
+        <div class="mic-row">
+          <span class="mic-label" title="语音结束后门控多快放开。太快会把字尾切掉，太慢会让下一句开头的电平发闷">门控释放</span>
           <input type="range" id="tune-release" min="2" max="100" step="1" />
           <span id="tune-release-v" class="sub">0.25</span>
         </div>
         <div class="mic-row">
-          <span class="mic-label">目标响度</span>
+          <span class="mic-label" title="响度目标。越高越响，但噪声也会被顶起来">目标响度</span>
           <input type="range" id="tune-agc" min="1000" max="7000" step="100" />
           <span id="tune-agc-v" class="sub">3600</span>
         </div>
         <div class="mic-row">
-          <span class="mic-label">最大增益</span>
-          <input type="range" id="tune-maxgain" min="1" max="16" step="1" />
-          <span id="tune-maxgain-v" class="sub">8×</span>
+          <span class="mic-label" title="信号很弱时最多放大多少倍。离得远需要更大"><span id="tune-maxgain-v">32</span>× 上限</span>
+          <input type="range" id="tune-maxgain" min="1" max="64" step="1" />
+        </div>
+        <div class="mic-row">
+          <span class="mic-label" title="决定多弱的声音还算「有人在说话」。调低能抓住更远更轻的语音，但环境噪声也可能被误判成语音">灵敏度</span>
+          <input type="range" id="tune-sens" min="15" max="60" step="5" />
+          <span id="tune-sens-v" class="sub">3.0×</span>
         </div>
         <div class="mic-row">
           <span class="mic-label"><label><input type="checkbox" id="opt-noise-sub" /> 稳态底噪扣除</label></span>
-          <span class="sub">学习静音期的噪声谱并扣除。专治麦自噪/风扇这类<b>持续存在</b>的底噪——神经网络会刻意保留它们，这一层专门补上。开启后需静音约 1 秒学习。</span>
+          <span class="sub">学习静音期的噪声谱并扣除，专治风扇/麦自噪这类<b>持续</b>底噪。开启后需静音约 1 秒学习。</span>
         </div>
         <div class="mic-row">
           <span class="mic-label">过减强度</span>
@@ -225,13 +245,6 @@
         <div class="mic-row">
           <button id="tune-reset" class="ghost-btn">恢复默认</button>
           <button id="tune-relearn" class="ghost-btn">重学底噪</button>
-          <span class="sub">降噪强度越小越保护 s/sh 辅音但底噪残留多；目标响度越高越容易被噪声顶起。改完即时生效，逐项单独试最容易定位。</span>
-        </div>
-        <div class="mic-row">
-          <span class="mic-label">自动调参</span>
-          <button id="autotune-run" class="ghost-btn">开始自动调参</button>
-          <button id="autotune-rollback" class="ghost-btn">回滚</button>
-          <span id="autotune-status" class="sub">逐参数自动搜索最优档位</span>
         </div>
       </details>
     </section>
