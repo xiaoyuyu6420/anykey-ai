@@ -66,6 +66,8 @@
 
 插上 R87 Pro AI 自动进入深度适配（协议逆向自官方 RK-AI 1.0.2 + 三轮实机标定，完整文档见 [docs/protocol.md](docs/protocol.md)）：
 
+![RK R87 Pro AI 深度适配：键位页](docs/screenshot-rk.png)
+
 1. 启动后托盘常驻，按键盘 **「AI 切换」键**进入 AI 模式（F 行白灯亮）
 2. 在设置界面对每个键配动作，**按键即触发**，界面里按键会高亮对应行
 3. 「键盘麦克风 → 虚拟麦克风」：装虚拟声卡（Win: [VB-Cable](https://vb-audio.com/Cable/) / Mac: [BlackHole 2ch](https://existential.audio/blackhole/)）→ 勾「启用桥接」→ 按住开麦键（默认 F10）说话，任何软件都能用
