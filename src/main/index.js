@@ -340,6 +340,7 @@ function boot() {
   // 音频管线预热：降噪引擎异步初始化（未就绪期自动旁路，其余 DSP 照常）
   micPipeline = new MicPipeline({
     bypass: cfg.settings.micBypass === true,
+    inRate: cfg.settings.micInputRate,
     denoise: cfg.settings.denoiseEnabled !== false,
     noiseSubtract: cfg.settings.noiseSubtractEnabled !== false,
     overSub: cfg.settings.overSub,
@@ -352,6 +353,8 @@ function boot() {
   micPipeline.initDenoiser().then(engine => {
     if (engine === 'df') console.log('[mic] DeepFilterNet3 降噪已就绪 attenLim=' + (cfg.settings.micTune || {}).attenLimDb + 'dB');
     if (cfg.settings.micBypass === true) console.log('[mic] 原始音频旁路已开启——全部 DSP 跳过，输出为键盘麦原样声音');
+    const ir = Number(cfg.settings.micInputRate) || 17129;
+    if (Math.abs(ir - 16000) > 1) console.log(`[mic] 输入采样率转换 ${ir}Hz → 16000Hz（修正降调 7%，旁路模式下同样生效）`);
     else if (engine === 'rnnoise') console.log('[mic] RNNoise 降噪已就绪（DFN3 回退）');
   });
 

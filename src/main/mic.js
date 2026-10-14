@@ -13,6 +13,7 @@
 const { Denoiser } = require('./denoise');
 const { DeepFilter } = require('./df');
 const { NoiseSubtractor } = require('./noise-profile');
+const { RateConverter } = require('./resample');
 
 function init(mod) { mod.init(); return mod; }
 
@@ -97,6 +98,13 @@ class MicPipeline {
 
     // 原始音频旁路：跳过全部 DSP（听原始声音做基准对比用）
     this.bypass = opts.bypass === true;
+
+    // ---- 输入真采样率转换（v0.13.1）----
+    // 键盘实际输出约 17129Hz（实测），代码原按 16000Hz 处理 → 声音降调 7%。
+    // 这是「传输层纠错」不是音频处理：即使旁路模式也要开，否则听到的是变调的假原始。
+    // inRate=0 或 16000 时不做转换。
+    this.inRate = Number(opts.inRate) > 0 ? Number(opts.inRate) : 17129;
+    this.rc = Math.abs(this.inRate - 16000) > 1 ? new RateConverter(this.inRate, 16000) : null;
 
     this.hp1 = new Biquad(highpassCoeffs(16000, 100));
     this.hp2 = new Biquad(highpassCoeffs(16000, 100));
@@ -241,6 +249,8 @@ class MicPipeline {
     return {
       engine: this.bypass ? 'bypass' : (this.engine || 'none'),
       bypass: !!this.bypass,
+      inRate: this.inRate,
+      resampling: !!this.rc,
       snrDb: Math.round(this.snrDb * 10) / 10,
       vad: Math.round(this.vad * 100) / 100,
       noiseFloor: Math.round(this.noiseFloor),
@@ -285,9 +295,16 @@ class MicPipeline {
 
   // 进 FIFO 并按块处理；返回本次产出的 int16 PCM Buffer（可能为空）
   feed(samples, n) {
-    for (let i = 0; i < n; i++) {
+    // 入口先做真采样率转换（见构造函数注释）：之后高通/DFN3/谱减/门控
+    // 才都工作在真正的 16kHz 上
+    let src = samples, cnt = n;
+    if (this.rc) {
+      src = this.rc.process(samples, n);
+      cnt = src.length;
+    }
+    for (let i = 0; i < cnt; i++) {
       if (this.fifoLen >= FIFO_CAP) break; // 积压保护：丢新保旧
-      this.fifo[this.fifoLen++] = samples[i];
+      this.fifo[this.fifoLen++] = src[i];
     }
     let outs = [];
     while (this.fifoLen >= BLOCK) {

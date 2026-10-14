@@ -31,7 +31,7 @@ function attachFakeDf(p, snr = 20) {
 (async () => {
   console.log('[T1] 远距优化默认参数落位');
   {
-    const p = new MicPipeline();
+    const p = new MicPipeline({ inRate: 16000 });
     ok(p.tune.gateRelease === 0.25, `门控释放默认 0.25（实际 ${p.tune.gateRelease}）`);
     ok(p.tune.agcTarget === 3600, `AGC 目标默认 3600（实际 ${p.tune.agcTarget}）`);
     ok(p.tune.attenLimDb === 6, `DFN3 衰减上限默认 6dB（实测数据支持的平衡点，实际 ${p.tune.attenLimDb}）`);
@@ -45,7 +45,7 @@ function attachFakeDf(p, snr = 20) {
 
   console.log('[T2] setTune 运行时生效 + 越界钳制');
   {
-    const p = new MicPipeline();
+    const p = new MicPipeline({ inRate: 16000 });
     const r = p.setTune({ gateRelease: 0.5, agcTarget: 2000, agcMaxGain: 12 });
     ok(r.gateRelease === 0.5 && r.agcTarget === 2000 && r.agcMaxGain === 12, '合法值生效');
     p.setTune({ gateRelease: 99, agcTarget: 999999, attenLimDb: -5, gateFloor: 3, agcMaxGain: 0 });
@@ -60,21 +60,21 @@ function attachFakeDf(p, snr = 20) {
 
   console.log('[T3] attenLim 走 setAttenLim，不重建引擎');
   {
-    const p = new MicPipeline();
+    const p = new MicPipeline({ inRate: 16000 });
     attachFakeDf(p);
     p.engine = 'df';
     p.setTune({ attenLimDb: 5 });
     ok(p.df.attenLimDb === 5, `df 收到 attenLim=5（实际 ${p.df.attenLimDb}）`);
     ok(p.df._lim.length === 1, '走 setAttenLim 而非重建 create');
     // 引擎未就绪时不能崩
-    const q = new MicPipeline();
+    const q = new MicPipeline({ inRate: 16000 });
     q.setTune({ attenLimDb: 4 });
     ok(q.tune.attenLimDb === 4, '引擎未就绪时 tune 照常记录');
   }
 
   console.log('[T4] 门控释放加快——长静音后不塌');
   {
-    const p = new MicPipeline();
+    const p = new MicPipeline({ inRate: 16000 });
     p.engine = null;
     p.noiseFloor = 150;
     // 先喂 1.2s 低电平噪声，让 speech 恒假、门控落到低位
@@ -95,7 +95,7 @@ function attachFakeDf(p, snr = 20) {
 
   console.log('[T5] AGC 目标下压——语音电平进 ASR 甜区且不过冲');
   {
-    const p = new MicPipeline();
+    const p = new MicPipeline({ inRate: 16000 });
     p.engine = null;
     p.noiseFloor = 150;
     // 远距弱语音 RMS≈900：旧目标 4200 会把增益拉到 4.7×，新目标 3600 → 4×
@@ -119,7 +119,7 @@ function attachFakeDf(p, snr = 20) {
 
   console.log('[T6] diagnostics 快照字段齐全');
   {
-    const p = new MicPipeline();
+    const p = new MicPipeline({ inRate: 16000 });
     attachFakeDf(p);
     p.engine = 'df';
     p.feed(new Int16Array(BLOCK).fill(500), BLOCK);
@@ -135,7 +135,7 @@ function attachFakeDf(p, snr = 20) {
 
   console.log('[T9] 原始音频旁路：必须逐样本不变');
   {
-    const p = new MicPipeline({ bypass: true });
+    const p = new MicPipeline({ inRate: 16000, bypass: true });
     attachFakeDf(p, 0.25);
     p.engine = 'df';
     // 造一段有直流偏置 + 大动态的信号：任何高通/门控/AGC 都会改变它
@@ -156,7 +156,7 @@ function attachFakeDf(p, snr = 20) {
 
   console.log('[T10] 关掉旁路后处理链恢复、切回无残留');
   {
-    const p = new MicPipeline({ bypass: true });
+    const p = new MicPipeline({ inRate: 16000, bypass: true });
     attachFakeDf(p, 0.25);
     p.engine = 'df';
     const mk = () => {

@@ -51,7 +51,7 @@ function runTone(p, freq, amp, blocks, collector) {
 
 console.log('[P1] 探针降噪量与真实倍数一致');
 {
-  const p = new MicPipeline({ noiseSubtract: false });
+  const p = new MicPipeline({ inRate: 16000, noiseSubtract: false });
   attachDf(p, 0.25);         // 0.25 倍 → 20·log10(4) = 12.04dB
   p.engine = 'df';
   runTone(p, 300, 300, 200);  // 静音段（低于语音判定）
@@ -69,7 +69,7 @@ console.log('[P1] 探针降噪量与真实倍数一致');
 
 console.log('[P2] 引擎旁路 → 判读为降噪几乎没工作');
 {
-  const p = new MicPipeline({ noiseSubtract: false });
+  const p = new MicPipeline({ inRate: 16000, noiseSubtract: false });
   p.engine = null;
   runTone(p, 300, 300, 200);  // 静音段
   runTone(p, 300, 8000, 200); // 语音段
@@ -81,7 +81,7 @@ console.log('[P2] 引擎旁路 → 判读为降噪几乎没工作');
 
 console.log('[P3] 语音段与静音段分开统计');
 {
-  const p = new MicPipeline({ noiseSubtract: false });
+  const p = new MicPipeline({ inRate: 16000, noiseSubtract: false });
   attachDf(p, 0.5);          // 0.5 倍 → 6.02dB
   p.engine = 'df';
   runTone(p, 300, 300, 250);   // 弱信号 → 静音桶
@@ -96,7 +96,7 @@ console.log('[P3] 语音段与静音段分开统计');
 console.log('[P4] 探针在 AGC 之前测量（增益不污染读数）');
 {
   const mk = agcTarget => {
-    const p = new MicPipeline({ noiseSubtract: false, agcTarget });
+    const p = new MicPipeline({ inRate: 16000, noiseSubtract: false, agcTarget });
     attachDf(p, 0.5);
     p.engine = 'df';
     runTone(p, 300, 300, 200);

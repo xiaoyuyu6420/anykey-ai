@@ -29,7 +29,7 @@ function fakeEngines() {
 (async () => {
   console.log('[D1] RNNoise 输出回拷（修复前 blk 保持原值 = 降噪失效）');
   {
-    const p = new MicPipeline();
+    const p = new MicPipeline({ inRate: 16000 });
     const fakes = fakeEngines();
     p.df = fakes.df;
     p.rnnoise = fakes.rnnoise;
@@ -42,7 +42,7 @@ function fakeEngines() {
 
   console.log('[D2] setDenoise 运行时开关');
   {
-    const p = new MicPipeline({ denoise: true });
+    const p = new MicPipeline({ inRate: 16000, denoise: true });
     const fakes = fakeEngines();
     p.df = fakes.df;
     p.rnnoise = fakes.rnnoise;
@@ -59,7 +59,7 @@ function fakeEngines() {
 
   console.log('[D3] 帧异常 → 旁路 + 冷却重试恢复');
   {
-    const p = new MicPipeline();
+    const p = new MicPipeline({ inRate: 16000 });
     const boom = { init() { throw new Error('no dll'); }, processFrame() { throw new Error('native boom'); } };
     const good = fakeEngines();
     p.df = boom;

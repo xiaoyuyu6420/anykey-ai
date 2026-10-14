@@ -226,7 +226,7 @@ const HB104 = Buffer.from([5, 0xff, 0xf1, 0xfe, 0xc0, 104, 0, 0xef, 0, 0, 0, 0, 
   console.log('[T9] mic.js USB PCM 直通 + DSP 链');
   {
     const { MicPipeline } = require('../src/main/mic.js');
-    const p = new MicPipeline();
+    const p = new MicPipeline({ inRate: 16000 });
     const mk = amp => { const b = Buffer.alloc(64); b[0] = 0x1c; for (let i = 0; i < 30; i++) b.writeInt16LE(amp, 4 + i * 2); return b; };
 
     // A：管线按 160 样本块出数——30 样本/帧，第 6 帧才凑满第一块
@@ -241,7 +241,7 @@ const HB104 = Buffer.from([5, 0xff, 0xf1, 0xfe, 0xc0, 104, 0, 0xef, 0, 0, 0, 0, 
     ok(engine === 'df' || engine === 'rnnoise', `降噪引擎就绪（实得 ${engine}）`);
 
     // C：低频隆隆被陡高通压制（50Hz 正弦输出 RMS 应远小于输入）
-    const p2 = new MicPipeline();
+    const p2 = new MicPipeline({ inRate: 16000 });
     await p2.initDenoiser();
     let inRms = 0, inN = 0, outRmsAfterWarmup = 0, outN = 0;
     for (let k = 0; k < 100; k++) {
@@ -270,7 +270,7 @@ const HB104 = Buffer.from([5, 0xff, 0xf1, 0xfe, 0xc0, 104, 0, 0xef, 0, 0, 0, 0, 
     ok(!clipped, '软限幅输出有界');
 
     // E：静音段被门控压低（喂底噪，输出 RMS 应显著低于输入）
-    const p3 = new MicPipeline();
+    const p3 = new MicPipeline({ inRate: 16000 });
     await p3.initDenoiser();
     let gIn = 0, gOut = 0, gN = 0;
     for (let k = 0; k < 150; k++) { // 1.5s 底噪让门控收敛
