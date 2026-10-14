@@ -19,6 +19,17 @@ const BLK = 160;
 
 const rms = a => { let s = 0; for (const v of a) s += v * v; return Math.sqrt(s / a.length) * 32768; };
 
+// 文本归一化：去标点空白 + 汉字数字与阿拉伯数字统一。
+// 为什么必须做：ASR 可能把「123321」输出成「一二三三二一」，逐字比会误判成 6 个字错——
+// 那是表示法差异，不是识别错误。
+const CN_NUM = { '〇': '0', '零': '0', '一': '1', '二': '2', '两': '2', '三': '3', '四': '4',
+                 '五': '5', '六': '6', '七': '7', '八': '8', '九': '9' };
+function normText(s) {
+  return String(s)
+    .replace(/[\s，。、！？：；""''（）,.!?;:()\[\]【】…—－-]/g, '')
+    .replace(/[〇零一二两三四五六七八九]/g, c => CN_NUM[c]);
+}
+
 // 过一遍项目真实管线（模式可指定）
 async function throughPipeline(sig, mode, hfBoost = 6) {
   const p = new MicPipeline({ inRate: 16000, autoRate: false, mode, hfBoostDb: hfBoost, noiseSubtract: false });
@@ -101,7 +112,7 @@ function normalize(sig, targetRms = 0.05) {
   }
   const { rec } = makeRecognizer('paraformer');
   const wav = readWav(wavFile);
-  const ref = fs.readFileSync(refFile, 'utf8').trim().replace(/[\s，。、！？：；""''（）]/g, '');
+  const ref = normText(fs.readFileSync(refFile, 'utf8').trim());
   console.log(`录音: ${path.basename(wavFile)}  ${(wav.samples.length / 16000).toFixed(1)}s  RMS ${rms(wav.samples).toFixed(0)}`);
   console.log(`参考文本 (${ref.length} 字): ${ref}`);
   console.log();
@@ -142,7 +153,7 @@ function normalize(sig, targetRms = 0.05) {
     if (rOut < rIn * 0.01) { console.log(`${name.padEnd(28)} 输出近乎静音（${rOut.toFixed(0)} vs 输入 ${rIn.toFixed(0)}），跳过`); continue; }
     let sSq = 0; for (const v of sig) sSq += v * v;
     const outRms = Math.sqrt(sSq / Math.max(1, sig.length)) * 32768;
-    const hyp = transcribe(rec, { sampleRate: 16000, samples: sig }).replace(/[\s，。、！？：；""''（）]/g, '');
+    const hyp = normText(transcribe(rec, { sampleRate: 16000, samples: sig }));
     const d = editDistance(ref, hyp);
     const cer = d / Math.max(1, ref.length) * 100;
     rows.push({ name, d, cer, hyp });
