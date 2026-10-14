@@ -10,3 +10,6 @@ e2e/tmp-userdata*/
 e2e/evidence*/
 crucible/
 .zcode/
+
+# 本地 ASR 模型（80MB，用于离线测识别率；按需下载，不进仓库）
+tools/asr-model/
