@@ -350,6 +350,7 @@ function boot() {
   micPipeline = new MicPipeline({
     mode: cfg.settings.micMode || (cfg.settings.micBypass === true ? 'raw' : 'full'),
     inRate: cfg.settings.micInputRate,
+    hfBoostDb: cfg.settings.micHfBoost,
     denoise: cfg.settings.denoiseEnabled !== false,
     noiseSubtract: cfg.settings.noiseSubtractEnabled !== false,
     overSub: cfg.settings.overSub,
@@ -362,7 +363,8 @@ function boot() {
   micPipeline.initDenoiser().then(engine => {
     if (engine === 'df') console.log('[mic] DeepFilterNet3 降噪已就绪 attenLim=' + (cfg.settings.micTune || {}).attenLimDb + 'dB');
     const mm = micPipeline.mode;
-    console.log('[mic] 处理档位:', mm === 'raw' ? 'raw（全跳过，键盘麦原声）' : mm === 'hp' ? 'hp（只去低频轰鸣）' : 'full（完整处理链）');
+    const modeLabel = { raw: 'raw（全跳过，键盘麦原声）', hp: 'hp（只去低频轰鸣）', speech: `speech（去低频 + 辅音区补偿 ${micPipeline.hfBoostDb}dB）`, full: 'full（完整处理链）' };
+    console.log('[mic] 处理档位:', modeLabel[mm] || mm);
     const ir = Number(cfg.settings.micInputRate) || 17129;
     if (Math.abs(ir - 16000) > 1) console.log(`[mic] 输入采样率转换 ${ir}Hz → 16000Hz（修正降调 7%，旁路模式下同样生效）`);
     else if (engine === 'rnnoise') console.log('[mic] RNNoise 降噪已就绪（DFN3 回退）');
@@ -1085,7 +1087,9 @@ ipcMain.handle('set-settings', (_e, settings) => {
   cfg.settings = { ...cfg.settings, ...settings };
   config.save(cfg);
   if ('autostart' in settings) setAutostart(settings.autostart);
-  // 处理档位：即时生效（raw / hp / full）
+  // 辅音区补偿量：即时生效
+  if ('micHfBoost' in settings && micPipeline) micPipeline.setHfBoost(settings.micHfBoost);
+  // 处理档位：即时生效（raw / hp / speech / full）
   if ('micMode' in settings && micPipeline) micPipeline.setMode(settings.micMode);
   else if ('micBypass' in settings && micPipeline) micPipeline.setBypass(settings.micBypass === true);
   // 降噪开关：即时生效（旁路/恢复引擎），无需重启

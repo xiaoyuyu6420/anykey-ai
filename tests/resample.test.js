@@ -147,15 +147,23 @@ console.log('[R7] 采样率自动校准（不该硬编码链路速率）');
   ok(d.resampling === true, '校准后仍启用重采样（17k≠16k）');
 }
 {
-  // 异常值不采纳：瞬间灌入海量样本 → 测得速率远超合理范围 → 保留配置值
+  // 异常值不采纳、也不锁定（v0.13.4 修复）：
+  // 音频刚开始流动时样本数严重偏低，会测出荒谬速率（实测开局测到 1123Hz）。
+  // 若此时就标记 done，就会一直用错误速率——比如把 16k 的蓝牙流按 17129
+  // 重采样，凭空引入 7% 升调。正确行为：重试，连续 5 次异常才放弃。
   const p = new MicPipeline({ bypass: true, noiseSubtract: false, inRate: 17129 });
   const buf = new Int16Array(2000);
   const t0 = Date.now();
-  while (Date.now() - t0 < 4200) p.feed(buf, 2000);
-  const d = p.diagnostics();
-  ok(d.inRateCalibrated === true, '执行了校准');
-  ok(d.inRateMeasured > 19000, `测得异常高速率 ${d.inRateMeasured}Hz`);
-  ok(d.inRate === 17129, `异常值未采纳，保留配置值 ${d.inRate}Hz`);
+  while (Date.now() - t0 < 4200) p.feed(buf, 2000);   // 第 1 轮：极快灌入 → 异常速率
+  const d1 = p.diagnostics();
+  ok(d1.inRateMeasured > 19000, `测得异常高速率 ${d1.inRateMeasured}Hz`);
+  ok(d1.inRateCalibrated === false, '异常值不锁定，保持可重试（这是修复的核心）');
+  ok(d1.inRate === 17129, `异常值未采纳，保留配置值 ${d1.inRate}Hz`);
+  // 继续跑到 5 次异常 → 放弃并锁定（不再无休止重试）
+  const t1 = Date.now();
+  while (Date.now() - t1 < 22000) p.feed(buf, 2000);
+  ok(p.diagnostics().inRateCalibrated === true, '连续 5 次异常后放弃并锁定');
+  ok(p.diagnostics().inRate === 17129, '锁定后仍保留配置值');
 }
 {
   // 显式 16000 = 1:1 测试模式：不校准、不转换（保证单测确定性）

@@ -45,6 +45,24 @@ function highpassCoeffs(fs, f0, q = Math.SQRT1_2) {
   return { b0: b0 / A0, b1: b1 / A0, b2: b2 / A0, a1: A1 / A0, a2: A2 / A0 };
 }
 
+// RBJ cookbook 二阶高频搁架（high shelf）：把 f0 以上按 gainDb 抬起来。
+// 用途见 mode='speech'：这个键盘麦的辅音区（2-8kHz）实测只有正常值的 1/4，
+// 而识别严重依赖该频段——用搁架把它补回来，是「提升识别率」最直接的一刀。
+function highShelfCoeffs(fs, f0, gainDb, S = 1) {
+  const A = Math.pow(10, gainDb / 40);
+  const w0 = 2 * Math.PI * f0 / fs;
+  const cw = Math.cos(w0);
+  const alpha = Math.sin(w0) / 2 * Math.sqrt((A + 1 / A) * (1 / S - 1) + 2);
+  const sa = Math.sqrt(A);
+  const b0 = A * ((A + 1) + (A - 1) * cw + 2 * sa * alpha);
+  const b1 = -2 * A * ((A - 1) + (A + 1) * cw);
+  const b2 = A * ((A + 1) + (A - 1) * cw - 2 * sa * alpha);
+  const a0 = (A + 1) - (A - 1) * cw + 2 * sa * alpha;
+  const a1 = 2 * ((A - 1) - (A + 1) * cw);
+  const a2 = (A + 1) - (A - 1) * cw - 2 * sa * alpha;
+  return { b0: b0 / a0, b1: b1 / a0, b2: b2 / a0, a1: a1 / a0, a2: a2 / a0 };
+}
+
 class Biquad {
   constructor(c) { this.c = c; this.x1 = 0; this.x2 = 0; this.y1 = 0; this.y2 = 0; }
   process(x) {
@@ -121,6 +139,10 @@ class MicPipeline {
 
     this.hp1 = new Biquad(highpassCoeffs(16000, 100));
     this.hp2 = new Biquad(highpassCoeffs(16000, 100));
+    // 辅音区补偿（mode='speech'）：实测该麦 2-8kHz 只有正常语音的约 1/4 能量，
+    // 两级级联 = 约 2×gainDb 的搁架斜率，起点 1800Hz（元音/辅音分界附近）
+    this.hfBoostDb = Number(opts.hfBoostDb) >= 0 ? Number(opts.hfBoostDb) : 6;
+    this._buildShelf();
     // 降噪引擎：DFN3 主力，RNNoise 兜底（dll/模型缺失时自动降级）
     this.df = new DeepFilter();
     this.rnnoise = new Denoiser();
@@ -343,6 +365,19 @@ class MicPipeline {
     // 1) 陡高通（16k 域）—— raw 之外的所有档位都要（hp 档就到此为止）
     for (let i = 0; i < BLOCK; i++) blk[i] = this.hp2.process(this.hp1.process(blk[i]));
 
+    // speech 档：去低频轰鸣 + 补辅音区（高频搁架），不做降噪/增益/门控。
+    // 依据：实测该麦说话段 2-8kHz 仅占 1.3%（正常语音约 4~5%），
+    // 而 s/sh/t/k/f 等决定可懂度的辅音全在该频段，ASR 对此高度敏感。
+    if (this.mode === 'speech') {
+      const buf = Buffer.alloc(BLOCK * 2);
+      for (let i = 0; i < BLOCK; i++) {
+        let v = this.sh1.process(blk[i]);
+        if (v > 32767) v = 32767; else if (v < -32768) v = -32768;
+        buf.writeInt16LE(Math.round(v), i * 2);
+      }
+      return buf;
+    }
+
     // hp 档：只去低频轰鸣，不做降噪/增益/门控。用来验证「刺」是否来自低频
     if (this.mode === 'hp') {
       const buf = Buffer.alloc(BLOCK * 2);
@@ -409,17 +444,50 @@ class MicPipeline {
     this._cal.samples += nInputSamples;
     const el = (now - this._cal.t0) / 1000;
     if (el < 4) return;
-    this._cal.done = true;
     const measured = this._cal.samples / el;
     this._calRate = Math.round(measured);
     if (measured >= 14000 && measured <= 19000) {
+      this._cal.done = true;
       this.inRate = Math.round(measured);
       this.rc = Math.abs(this.inRate - 16000) > 80 ? new RateConverter(this.inRate, 16000) : null;
       console.log(`[mic] 自动校准输入采样率: ${this._calRate}Hz（累计 ${this._cal.samples} 样本 / ${el.toFixed(1)}s）` +
         (this.rc ? ` → 重采样到 16000Hz` : ' → 与 16k 一致，不需转换'));
     } else {
-      console.log(`[mic] 采样率校准结果异常（${this._calRate}Hz，超出 14k~19k），保留配置值 ${this.inRate}Hz`);
+      // 异常值不锁定：音频刚开始流动/中途断续时，样本数会严重偏低
+      // （实测开局测到 1123Hz）。若在此锁定 done，就会一直用一个错误速率——
+      // 比如把 16k 的蓝牙流按 17129 重采样，凭空引入 7% 升调。
+      // 重置窗口重试；连续 5 次异常才放弃并保留配置值。
+      this._cal.retry = (this._cal.retry || 0) + 1;
+      if (this._cal.retry >= 5) {
+        this._cal.done = true;
+        console.log(`[mic] 采样率校准连续 ${this._cal.retry} 次异常（最近 ${this._calRate}Hz），保留配置值 ${this.inRate}Hz`);
+      } else {
+        console.log(`[mic] 采样率校准样本不足/异常（${this._calRate}Hz，第 ${this._cal.retry} 次），稍后重试`);
+      }
+      this._cal.t0 = 0; this._cal.samples = 0;
     }
+  }
+
+  // 重建辅音区补偿滤波器（增益可运行时调）。
+  // 单级搁架、起点 2600Hz：实测（用真实语音离线扫描）该组合把 2-8kHz 占比
+  // 从 1.33% 提到约 6%，最接近正常语音的 4~5%；且几乎不动已经正常偏高的
+  // 1-2kHz 区（两级级联会到 +12dB，实测把该带推到 19.9%，严重过头）。
+  _buildShelf() {
+    this.sh1 = new Biquad(highShelfCoeffs(16000, 2600, this.hfBoostDb));
+    this._shelfReset();
+  }
+
+  _shelfReset() {
+    if (this.sh1) { this.sh1.x1 = this.sh1.x2 = this.sh1.y1 = this.sh1.y2 = 0; }
+  }
+
+  // 运行时调辅音区补偿量（dB，0 = 关闭补偿）
+  setHfBoost(db) {
+    const v = Math.max(0, Math.min(18, Number(db)));
+    if (!Number.isFinite(v)) return this.hfBoostDb;
+    this.hfBoostDb = v;
+    this._buildShelf();
+    return this.hfBoostDb;
   }
 
   // 原始直出：唯一的处理是 float→int16 的类型转换与溢出钳制。
@@ -437,7 +505,7 @@ class MicPipeline {
 
   // 运行时切换处理档位（raw / hp / full）
   setMode(mode) {
-    if (!['raw', 'hp', 'full'].includes(mode)) return this.mode;
+    if (!['raw', 'hp', 'speech', 'full'].includes(mode)) return this.mode;
     this.mode = mode;
     this.bypass = mode === 'raw';
     {
@@ -446,6 +514,7 @@ class MicPipeline {
       this.hp1 = new Biquad(highpassCoeffs(16000, 100));
       this.hp2 = new Biquad(highpassCoeffs(16000, 100));
       this.noiseFloor = 150;
+      this._shelfReset();
       this.noiseSub && this.noiseSub.reset();
       this.resetProbe();
     }

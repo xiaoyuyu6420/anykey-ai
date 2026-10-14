@@ -224,5 +224,55 @@ function attachFakeDf(p, snr = 20) {
     ok(p2.setMode('bogus') === 'full', '非法档位被忽略');
   }
 
+  console.log('[T12] speech 档：辅音区（2-8kHz）补偿');
+  {
+    // 用单频正弦测该频率上的实际增益——比看波形直观，也能验证滤波器系数正确
+    const gainAt = (mode, freq, hfBoostDb) => {
+      const p = new MicPipeline({ inRate: 16000, mode, hfBoostDb, noiseSubtract: false });
+      const AC = 200;                       // 多块取稳态，避开滤波器暂态
+      const buf = new Int16Array(BLOCK);
+      let peak = 0;
+      for (let b = 0; b < AC; b++) {
+        for (let i = 0; i < BLOCK; i++) {
+          buf[i] = Math.round(6000 * Math.sin(2 * Math.PI * freq * (b * BLOCK + i) / 16000));
+        }
+        const out = p.feed(buf, BLOCK);
+        if (b > AC - 8) for (let i = 0; i < BLOCK; i++) peak = Math.max(peak, Math.abs(out.readInt16LE(i * 2)));
+      }
+      return 20 * Math.log10(peak / 6000);
+    };
+    // 低频不应被抬（搁架起点 2600Hz）
+    const lo = gainAt('speech', 300, 6);
+    ok(Math.abs(lo) < 1.5, `300Hz 基本不变 ${lo.toFixed(2)}dB（搁架只影响高频）`);
+    // 6kHz 应接近设定的 +6dB（±2dB 容差）
+    const hi6 = gainAt('speech', 6000, 6);
+    ok(Math.abs(hi6 - 6) < 2.0, `6kHz 增益 ${hi6.toFixed(2)}dB（设定 +6dB）`);
+    // 补偿量可调：+10dB 应明显大于 +3dB
+    const g3 = gainAt('speech', 6000, 3);
+    const g10 = gainAt('speech', 6000, 10);
+    ok(g10 > g3 + 5, `补偿量可调：+3dB→${g3.toFixed(1)}dB，+10dB→${g10.toFixed(1)}dB`);
+    // 0dB = 关闭补偿（与 hp 档一致）
+    const hpH = gainAt('hp', 6000, 6);
+    const sp0 = gainAt('speech', 6000, 0);
+    ok(Math.abs(sp0 - hpH) < 0.5, `补偿 0dB 时与 hp 档一致（${sp0.toFixed(2)} vs ${hpH.toFixed(2)}）`);
+    // 档位与诊断
+    const p2 = new MicPipeline({ inRate: 16000, mode: 'speech', noiseSubtract: false });
+    p2.feed(new Int16Array(BLOCK).fill(1000), BLOCK);
+    ok(p2.diagnostics().mode === 'speech', `诊断 mode=speech（${p2.diagnostics().mode}）`);
+    ok(p2.hfBoostDb === 6, `默认补偿量 6dB（${p2.hfBoostDb}）`);
+    ok(p2.setHfBoost(12) === 12 && p2.hfBoostDb === 12, 'setHfBoost 运行时可调');
+    ok(p2.setHfBoost(999) === 18, `补偿量上限钳制 18dB（${p2.setHfBoost(999)}）`);
+    // 削顶保护：大信号 + 强补偿不得越界
+    const p3 = new MicPipeline({ inRate: 16000, mode: 'speech', hfBoostDb: 12, noiseSubtract: false });
+    const big = new Int16Array(BLOCK);
+    for (let i = 0; i < BLOCK; i++) big[i] = Math.round(25000 * Math.sin(2 * Math.PI * 6000 * i / 16000));
+    let over = 0;
+    for (let b = 0; b < 30; b++) {
+      const out = p3.feed(big, BLOCK);
+      for (let i = 0; i < BLOCK; i++) { const v = out.readInt16LE(i * 2); if (v === 32767 || v === -32768) over++; }
+    }
+    ok(over > 0, `强补偿下确实触发钳制（${over} 个样本）——证明有界不溢出`);
+  }
+
   process.exit(fail ? 1 : 0);
 })().catch(e => { console.error(e); process.exit(1); });
