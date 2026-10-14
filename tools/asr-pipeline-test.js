@@ -70,7 +70,10 @@ const WAV_DIR = path.join(MODEL_DIR, 'test_wavs');
 const WAVS = ['0.wav', '1.wav'];
 
 (async () => {
-  const { rec } = makeRecognizer();
+  const ENGINE = process.argv[2] || 'paraformer';
+  const NOISE = process.argv[3] || 'lf';    // lf 稳态低频 / click 脉冲敲键 / white 宽带
+  const { rec } = makeRecognizer(ENGINE);
+  console.log(`ASR 引擎: ${ENGINE}   噪声类型: ${NOISE}`);
 
   // 参考文本
   const cleanMap = new Map();
@@ -125,7 +128,23 @@ const WAVS = ['0.wav', '1.wav'];
           const r = rng(seed * 1000 + snr);
           const white = new Float32Array(c.clean.samples.length);
           for (let i = 0; i < white.length; i++) white[i] = r() * 2 - 1;
-          const nz = shelf(white, 1500, -6);
+          // 噪声类型：稳态低频（实测该麦的底噪）/ 脉冲（模拟敲键盘）/ 宽带
+          let nz;
+          if (NOISE === 'click') {
+            nz = new Float32Array(white.length);
+            const step = Math.round(16000 * (0.09 + r() * 0.12));   // 每 90~210ms 一次
+            for (let t = step; t < nz.length; t += step) {
+              const len = 300 + Math.round(r() * 500);
+              const amp = 0.25 + r() * 0.5;
+              for (let i = 0; i < len && t + i < nz.length; i++) {
+                nz[t + i] += (r() * 2 - 1) * amp * Math.exp(-i / 120);  // 指数衰减脉冲
+              }
+            }
+          } else if (NOISE === 'white') {
+            nz = white;
+          } else {
+            nz = shelf(white, 1500, -6);
+          }
           const k = (rms(miced) / Math.pow(10, snr / 20)) / rms(nz);
           const g = Math.pow(10, lvlDb / 20);      // 整体电平缩放（模拟远距/小声）
           const deg = new Float32Array(miced.length);
