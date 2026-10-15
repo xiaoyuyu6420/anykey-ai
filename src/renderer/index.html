@@ -150,6 +150,31 @@
       <span class="mic-label">远控防串键</span>
       <label><input type="checkbox" id="mic-remote-safe" /> 开启</label>
     </div>
+    <div class="mic-row" id="mic-latch-row">
+      <span class="mic-label" title="按住说话键超过该时长再松开：不关麦，保持说话状态；再按一下任意说话键（或鼠标侧键）结束。适合长段口述——不用一直按着">长按锁定</span>
+      <select id="mic-latch">
+        <option value="0">关闭</option>
+        <option value="3000">3 秒</option>
+        <option value="5000">5 秒</option>
+        <option value="8000">8 秒</option>
+      </select>
+      <select id="mic-latch-silence" title="锁定后一直没人说话超过该时长：自动结束锁定并关麦（防输入法框已关/人走开，麦还开着）">
+        <option value="0">静音不自动结束</option>
+        <option value="60">静音 1 分钟自动结束</option>
+        <option value="120">静音 2 分钟自动结束</option>
+        <option value="300">静音 5 分钟自动结束</option>
+      </select>
+    </div>
+    <div class="mic-row" id="mic-mouse-row" hidden>
+      <span class="mic-label" title="按住鼠标侧键 = 按住说话键（开麦 + 对输入法按下语音快捷键组合），锁定规则同上">鼠标侧键说话</span>
+      <label><input type="checkbox" id="opt-mouse-voice" /> 启用</label>
+      <select id="mouse-voice-btn">
+        <option value="x1">侧键4（后退）</option>
+        <option value="x2">侧键5（前进）</option>
+        <option value="both">两个侧键</option>
+      </select>
+      <label title="勾选后侧键只当说话键用，浏览器前进/后退等原功能不再触发"><input type="checkbox" id="opt-mouse-block" /> 拦截原功能</label>
+    </div>
     <div class="mic-level"><div id="mic-level-bar"></div></div>
 
       <!-- ① 处理方式：整个面板唯一的必选项。选哪个就显示哪个的说明，

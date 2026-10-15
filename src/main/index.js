@@ -19,7 +19,9 @@ const actions = require('./actions');
 const aiLayer = require('./ailayer');
 const kbdInject = require('./kbd-inject');
 const config = require('./config');
-const { REMOTE_SAFE_KEY, REMOTE_SAFE_VK, passKeyNameOf, aliasKeyOf } = require('./pt-alias');
+const { REMOTE_SAFE_KEY, REMOTE_SAFE_VK, isMicTrigger, passKeyNameOf, aliasKeyOf } = require('./pt-alias');
+const { createLatchState, latchEvent, resetLatch } = require('./mic-latch');
+const mousehook = require('./mousehook');
 
 let tray = null;
 let win = null;
@@ -444,6 +446,9 @@ function boot() {
   // AI 层热键（任意键盘）：按配置注册/不注册（默认关闭，F 键零影响）
   syncAilayer();
 
+  // 鼠标侧键说话：按配置装/卸 WH_MOUSE_LL 钩子（默认关闭，不钩子零开销）
+  syncMouseHook();
+
   // 精简 macOS 菜单栏：默认 7 项菜单太宽，刘海屏上会把右侧菜单栏图标挤掉；
   // 只留 app 名 + Edit（输入框的复制/粘贴/全选快捷键依赖 editMenu）
   if (process.platform === 'darwin') {
@@ -562,17 +567,11 @@ function onKey({ code, keyId, phase }) {
   if (win && !win.isDestroyed() && win.isVisible()) {
     win.webContents.send('key-event', { code, keyId: def.id, label: def.label, phase });
   }
-  // 开麦键联动：按住 = 主动开麦，松开 = 关麦（键可在设置里勾选，默认 F10 + AI 键；空 = 全关）
-  //（宏录制期间抑制：录宏不应触发语音推流）
+  // 开麦键联动（键可在设置里勾选，默认 F10 + AI 键；空 = 全关）。
+  // 走统一说话键链路 micTrigger：按住开麦松开关麦 + 组合键透传 + 长按锁定，
+  // 与鼠标侧键共用同一状态机（宏录制期间抑制：录宏不应触发语音推流，强制透传）
   const micKeys = cfg.settings.micTriggerKeys || [];
-  if (!macroArmed && micKeys.includes(keyId) && session) {
-    if (phase === 'down') session.askVoice();
-    else {
-      // 先冲刷尾音再关麦：顺序不能反——识别引擎在键抬起后立刻停止录音
-      flushPcmBatch();
-      session.stopVoice();
-    }
-  }
+  const isMicKey = !macroArmed && micKeys.includes(keyId);
   // cmd=159 厂商码只在 AI 模式上报 → 此路径一律用 AI 模式绑定集
   const binding = (cfg.bindingsAi && cfg.bindingsAi[keyId]) || { type: 'none' };
   // 诊断（临时）：F10 透传链路取证
@@ -592,7 +591,12 @@ function onKey({ code, keyId, phase }) {
   // 透传：未绑定任何动作（完全原生）、勾了透传、或宏录制中（强制——AI 模式厂商码
   // 路径的系统键状态由本应用回注合成，不透传则 GetAsyncKeyState 看不到，录不进宏）
   //（回注让用户在目标窗口看到真实输入反馈，一举两得）
-  passthroughKey(keyId, phase, macroArmed || binding.passthrough === true || binding.type === 'none');
+  // 说话键的注入由 micTrigger 统一负责（含长按锁定的延迟抬键），不重复走 passthroughKey
+  if (isMicKey) micTrigger(keyId, phase, binding.passthrough === true || binding.type === 
+'none'
+);
+  else
+ passthroughKey(keyId, phase, macroArmed || binding.passthrough === true || binding.type === 'none');
 }
 
 // 透传回注（AI 模式厂商码路径）。down 时记下决定，up 按记录执行；
@@ -616,7 +620,7 @@ function micPassModOf(keyId) {
   if (process.platform !== 'win32') return null;
   const m = cfg.settings.micPassMod;
   if (!['ctrl', 'alt', 'shift'].includes(m)) return null;
-  return (cfg.settings.micTriggerKeys || []).includes(keyId) ? m : null;
+  return isMicTrigger(cfg.settings, keyId) ? m : null;
 }
 
 // 透传主键名决策（逻辑都在 pt-alias.js 纯函数里，单测覆盖）：
@@ -699,7 +703,7 @@ function doPassUp(keyId, flags) {
   if (sent) {
     actions.postRawKey(sent, false, flags);
     if (mod) actions.postRawKey(mod, false, 0);
-    if ((cfg.settings.micTriggerKeys || []).includes(keyId)) {
+    if (isMicTrigger(cfg.settings, keyId)) {
       console.log(`[passthrough] ${keyId} → ${sent} up`);
     }
     if (sent !== keyId) settleRemoteProbe();
@@ -718,8 +722,129 @@ function passthroughKey(keyId, phase, pass, micAsked) {
   }
 }
 
+// 说话键统一入口（键盘触发键 + 鼠标侧键共用）：
+//   正常：按下开麦松开关麦；开启「长按锁定」后，按住 ≥ micLatchMs 再松开保持开麦，
+//   再按一下任意说话键结束。状态判定在 mic-latch.js（纯函数，单测覆盖），
+//   这里只执行副作用：固件开/关麦 + 输入法组合键透传（doPassDown/doPassUp）。
+const latchState = createLatchState();
+
+function micTrigger(keyId, phase, pass) {
+  const latchMs = Math.max(0, Number(cfg.settings.micLatchMs) || 0);
+  const r = latchEvent(latchState, keyId, phase, Date.now(), latchMs);
+  if (r.latch === 'on') console.log(`[mic] ${keyId} 按住 ≥ ${latchMs}ms → 锁定开麦（再按一下任意说话键结束）`);
+  if (r.latch === 'off') console.log(`[mic] 长按锁定由 ${keyId} 解除`);
+  if (r.mic === 'start' && session) session.askVoice();
+  if (r.mic === 'stop') {
+    // 先冲刷尾音再关麦：顺序不能反——识别引擎在键抬起后立刻停止录音
+    flushPcmBatch();
+    if (session) session.stopVoice();
+  }
+  if (r.inject === 'down') doPassDown(keyId, currentPassFlags(), pass);
+  else if (r.inject === 'up') {
+    const k = r.injectKey || keyId; // 结束锁定时被抬起的可能是另一个键
+    if (ptDecision.has(k)) doPassUp(k, currentPassFlags());
+  }
+  // 锁定开启期间测量语音活动（静音自动结束的输入）；看门狗随锁定/按住状态启停
+  if (micPipeline) micPipeline.setSpeechWatch(latchState.latched !== null);
+  syncLatchWatch();
+}
+
+// ---------- 说话键看门狗（2s 一拍，仅在「有按住/有锁定」时运行，平时零开销）----------
+// 防两类「麦一直开着」事故（实测踩过，见 2026-10-14 app.log）：
+//  ① up 事件丢失（钩子重装窗口等）：物理键早抬了，状态机还按着 → 麦/注入键都回不去。
+//     对账：按住超 3s 且 GetAsyncKeyState 显示物理键已抬 → 强制收尾。
+//     只对鼠标侧键和「注入键≠物理键」的触发键有效——默认配置下 F10 的注入就是
+//     F10 自身，自注入会把异步键状态顶住，查不出真丢（键盘 HID 的 up 本来就可靠）。
+//  ② 锁定后输入框已关/人走开：锁定静音超时（micLatchSilenceSec，默认 120s，
+//     0=关闭）自动结束锁定。只做「长时间静音」这一种保守判定，绝不抢用户的麦。
+let latchWatchTimer = null;
+
+function syncLatchWatch() {
+  const active = latchState.latched !== null || latchState.holds.size > 0;
+  if (active && !latchWatchTimer) {
+    latchWatchTimer = setInterval(latchWatchTick, 2000);
+  } else if (!active && latchWatchTimer) {
+    clearInterval(latchWatchTimer);
+    latchWatchTimer = null;
+  }
+}
+
+// 强制收尾一个「卡住」的按住：不经过 latchEvent（避免长持被误判成长按锁定）
+function forceReleaseHold(keyId, reason) {
+  latchState.holds.delete(keyId);
+  const latchedElsewhere = latchState.latched && latchState.latched !== keyId;
+  if (latchState.latched === keyId) latchState.latched = null;
+  console.log(`[mic] ${keyId} 强制收尾（${reason}）`);
+  flushPcmBatch();
+  if (!latchedElsewhere && session) session.stopVoice(); // 另有键锁定着：麦归它管
+  if (ptDecision.has(keyId)) doPassUp(keyId, currentPassFlags());
+}
+
+function latchWatchTick() {
+  const now = Date.now();
+  // ① up 丢失对账。前提：异步键状态对该键**可信**——LL 钩子吞掉的事件不更新
+  // 异步键状态表，所以侧键在「拦截原功能」模式下 GetAsyncKeyState 永远是抬起，
+  // 对账会把正常按住误判成丢失（2026-10-15 实测：按住 3s 被强制收尾）。
+  // 因此只对「不拦截原功能」的侧键对账（事件透传进系统，状态可信）；
+  // 拦截模式下无可信观测源，不丢 up 是常态，真丢了由静音看门狗兜底。
+  // 键盘触发键不走对账：HID 路径的 up 可靠，且默认配置下注入键=物理键，
+  // 自注入把异步状态顶住，本来就查不出真丢。
+  if (process.platform === 'win32' && cfg.settings.mouseVoiceBlock === false) {
+    for (const [keyId, t0] of [...latchState.holds]) {
+      if (!/^mouse_x[12]$/.test(keyId)) continue;
+      if (now - t0 < 3000) continue;
+      const vk = keyId === 'mouse_x1' ? 0x05 : 0x06;
+      if (!actions.asyncKeyDown(vk)) {
+        forceReleaseHold(keyId, `up 事件丢失，物理键已抬起 ${Math.round((now - t0) / 1000)}s`);
+      }
+    }
+  }
+  // ② 锁定静音超时
+  if (latchState.latched) {
+    const silenceMs = Math.max(0, Number(cfg.settings.micLatchSilenceSec) || 0) * 1000;
+    const ago = micPipeline && micPipeline.lastSpeechTs ? now - micPipeline.lastSpeechTs : 0;
+    if (silenceMs > 0 && ago > silenceMs) {
+      const rel = latchState.latched;
+      latchState.latched = null;
+      console.log(`[mic] 锁定 ${rel} 静音 ${Math.round(ago / 1000)}s 超阈值 ${silenceMs / 1000}s → 自动结束`);
+      flushPcmBatch();
+      if (session) session.stopVoice();
+      if (ptDecision.has(rel)) doPassUp(rel, currentPassFlags());
+      if (micPipeline) micPipeline.setSpeechWatch(false);
+      try {
+        new Notification({ title: 'AnyKey AI', body: `语音锁定已自动结束（静音 ${Math.round(ago / 1000)} 秒）` }).show();
+      } catch (_) { /* 通知不可用时静默 */ }
+    }
+  }
+  syncLatchWatch(); // 状态可能已清空 → 停表
+}
+
+// ---------- 鼠标侧键说话（仅 win32：WH_MOUSE_LL 钩子线程，见 mousehook.js）----------
+// 侧键 = 又一个「说话键」：合成 keyId mouse_x1/mouse_x2 走与键盘说话键完全相同的
+// micTrigger 链路（开麦/长按锁定/组合键透传全复用），鼠标只是多一个触发源。
+function syncMouseHook() {
+  const s = cfg.settings;
+  if (s.mouseVoiceEnabled === true && process.platform === 'win32') {
+    const r = mousehook.start(
+      { button: s.mouseVoiceButton || 'x1', block: s.mouseVoiceBlock !== false },
+      (keyId, phase) => {
+        console.log(`[mouse] ${keyId} ${phase}`);
+        micTrigger(keyId, phase, true);
+        if (win && !win.isDestroyed() && win.isVisible()) {
+          win.webContents.send('key-event', { keyId, label: keyId === 'mouse_x1' ? '侧键4' : '侧键5', phase });
+        }
+      });
+    if (!r.ok) console.log('[mousehook] 启动失败:', r.error);
+  } else {
+    mousehook.stop();
+  }
+}
+
 // 断线/停止兜底：把透传已按下的键全部抬起，避免系统键状态卡住
 function releasePassthrough() {
+  resetLatch(latchState); // 锁定态一并清掉（注入键由下面统一抬起）
+  if (micPipeline) micPipeline.setSpeechWatch(false);
+  if (latchWatchTimer) { clearInterval(latchWatchTimer); latchWatchTimer = null; }
   clearInterval(probeTimer); probeTimer = null;
   for (const [keyId, sent] of ptDecision) {
     if (sent) actions.postRawKey(sent, false, 0);
@@ -1033,7 +1158,10 @@ function pushSessionDetail() {
 // 恢复可见时全部反向。窗口事件驱动，无常驻轮询。
 function syncRenderActive() {
   if (!win || win.isDestroyed()) return;
-  const active = win.isVisible() && !win.isMinimized();
+  // 焦点也计入：渲染端 DOM blur/focus 在部分场景（如全屏游戏抢占前台）不可靠——
+  // 实测 Forza 前台时渲染端 document.hasFocus() 恒 true、blur 事件不到达，
+  // 3D 循环照跑。BrowserWindow.isFocused() 是 OS 级状态，以此为真源。
+  const active = win.isVisible() && !win.isMinimized() && win.isFocused();
   try { win.webContents.setBackgroundThrottling(!active); } catch (_) {}
   win.webContents.send('app-visibility', active);
 }
@@ -1083,6 +1211,8 @@ function showWindow() {
   win.on('show', syncRenderActive);
   win.on('minimize', syncRenderActive);
   win.on('restore', syncRenderActive);
+  win.on('focus', syncRenderActive);   // 焦点进出同样切换 3D 渲染（失焦 0 帧）
+  win.on('blur', syncRenderActive);
   win.webContents.on('did-finish-load', () => {
     syncRenderActive(); // 新页面渲染端默认在跑，加载完先同步一次可见性（崩溃自愈 reload 同样走到这）
     win.webContents.send('device-status', deviceConnected);
@@ -1139,6 +1269,8 @@ ipcMain.handle('set-settings', (_e, settings) => {
   if ('micTune' in settings && micPipeline && settings.micTune) micPipeline.setTune(settings.micTune);
   // 链路体检开关
   if ('micDiag' in settings) startMicDiag(!!settings.micDiag);
+  // 鼠标侧键说话：开关/键位/拦截策略变更即时重挂钩子
+  if ('mouseVoiceEnabled' in settings || 'mouseVoiceButton' in settings || 'mouseVoiceBlock' in settings) syncMouseHook();
   // 稳态噪声扣除：开关 + 过减参数
   if ('noiseSubtractEnabled' in settings && micPipeline) micPipeline.setNoiseSubtract(settings.noiseSubtractEnabled !== false);
   if (micPipeline && ('overSub' in settings || 'floorDb' in settings)) {
@@ -1187,7 +1319,14 @@ ipcMain.handle('session-reconnect', () => { if (session) session.reconnect(); })
 
 ipcMain.handle('mic-control', (_e, on) => {
   if (!session) return { ok: false, error: '会话未初始化' };
-  if (!on) flushPcmBatch();          // 同上：先送尾音，再关麦
+  if (!on) {
+    flushPcmBatch();          // 同上：先送尾音，再关麦
+    // 手动停麦同时解除长按锁定：被锁定的注入键还按着，必须补抬
+    const rel = resetLatch(latchState);
+    if (rel && ptDecision.has(rel)) doPassUp(rel, currentPassFlags());
+    if (micPipeline) micPipeline.setSpeechWatch(false);
+    if (latchWatchTimer) { clearInterval(latchWatchTimer); latchWatchTimer = null; }
+  }
   const ok = on ? session.askVoice() : session.stopVoice();
   return { ok, online: sessionOnline };
 });
@@ -1320,6 +1459,8 @@ function releaseDevices() {
   if (stats) stats.stop(); // 统计落盘
   if (fg) fg.stop();
   aiLayer.stop(); // AI 层热键线程（terminate 即注销全部热键）
+  mousehook.stop(); // 鼠标侧键钩子线程（WM_QUIT → UnhookWindowsHookEx）
+  if (latchWatchTimer) { clearInterval(latchWatchTimer); latchWatchTimer = null; }
   if (soundWin && !soundWin.isDestroyed()) soundWin.destroy(); // 音效隐藏页
   abortReplay(); // 掐掉宏回放孤儿 timer
 }
@@ -1355,3 +1496,6 @@ function aliveMarkStart() {
   try { fs.writeFileSync(p, JSON.stringify({ clean: false, ts: Date.now() })); } catch (_) {}
   setInterval(() => { try { fs.writeFileSync(p, JSON.stringify({ clean: false, ts: Date.now() })); } catch (_) {} }, 60 * 1000);
 }
+
+
+

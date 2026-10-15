@@ -121,6 +121,8 @@ class MicPipeline {
     //           而听感「刺」——所以「只去低频」是一个独立且低风险的档位
     //   full —— 完整处理链（高通+降噪+谱减+门控+AGC+压缩+限幅）
     this.mode = opts.mode || (opts.bypass === true ? 'raw' : 'full');
+    this.lastSpeechTs = 0;      // 最近一次检测到语音活动的时刻（锁定看门狗用）
+    this._speechWatch = false;  // 语音活动测量开关：仅锁定期间由主进程打开，常态零开销
     this.bypass = this.mode === 'raw';
 
     // ---- 输入真采样率转换（v0.13.1）----
@@ -301,6 +303,7 @@ class MicPipeline {
       packets: this.packets,
       fifoLen: this.fifoLen,
       clipRate: Math.round((this.clipRate || 0) * 10000) / 10000,
+      speechAgoMs: this.lastSpeechTs ? Date.now() - this.lastSpeechTs : -1,
       noiseProfile: this.noiseSub ? this.noiseSub.diagnostics() : null,
       // 降噪前后对比（核心诊断：回答「底噪高是降噪没工作还是物理底噪」）
       probe: this._probeOn ? this.probeReport() : null,
@@ -360,6 +363,14 @@ class MicPipeline {
   }
 
   processBlock(blk) {
+    // -1) 语音活动测量（仅 _speechWatch 打开时，即说话键锁定期间）：只读测量，
+    // 不改任何输出样本——raw 档透明性不破；每块一次 rms，开销可忽略。
+    // 底噪自适应阈值（×2.5 与门控 gateOpenMul 同族）：噪声环境/档位通用，不硬编码绝对电平。
+    if (this._speechWatch) {
+      const act = rmsOf(blk, BLOCK);
+      this._trackNoiseFloor(act);
+      if (act > Math.max(200, this.noiseFloor * 2.5)) this.lastSpeechTs = Date.now();
+    }
     // 0) 原始直出（跳过全部处理）：只做 float→int16，不加高通/降噪/谱减/门控/AGC/压缩/限幅。
     // 用途是「听原始音频」做基准对比——判断这套算法到底有没有帮上忙。
     // 关键：这里必须真的什么都不做，任何一处「顺手修一下」都会让对比失去意义。
@@ -572,6 +583,12 @@ class MicPipeline {
 
   // 兼容旧接口
   setBypass(on) { return this.setMode(on !== false ? 'raw' : 'full'); }
+
+  // 锁定看门狗开关：on 时 processBlock 顶部开始测量语音活动（lastSpeechTs）
+  setSpeechWatch(on) {
+    this._speechWatch = !!on;
+    if (on) this.lastSpeechTs = Date.now(); // 开启瞬间视为有活动：给静音计时一个起点
+  }
 
   // 重置探针统计。调参器每试一档参数前调用——否则读到的是历史累积值，
   // 分不清「这一档的效果」和「之前所有档位的平均」

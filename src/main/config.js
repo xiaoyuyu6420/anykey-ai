@@ -23,7 +23,15 @@ const DEFAULTS = {
     micBridgeEnabled: false,  // 键盘麦克风 → 虚拟声卡桥接
     micSinkId: '',            // 桥接播放设备（虚拟声卡播放端，如 CABLE Input）
     micTriggerKeys: ['f10', 'ai_key'], // 按住即开麦的键（可设置）
-    micPassMod: 'none',      // 语音键透传附加修饰键（none/ctrl/alt/shift；Windows 微信输入法
+    micLatchMs: 5000,        // 长按锁定（0=关闭）：按住说话键 ≥ 该毫秒数再松开 = 保持开麦，
+                             // 再按一下任意说话键结束。适合长段口述（一直按着累）
+    micLatchSilenceSec: 120,   // 锁定后持续静音自动结束（0=不自动结束）：防「输入法框已关、
+                             // 人走开了，麦还开着」。只做长时间静音这一种保守判定，绝不抢话
+    mouseVoiceEnabled: false, // 鼠标侧键按住说话（仅 win32，WH_MOUSE_LL 低级钩子）：
+                             // 按住侧键 = 按住说话键，开麦/锁定/组合键透传与键盘说话键完全一致
+    mouseVoiceButton: 'x1',   // x1=侧键4（后退）/ x2=侧键5（前进）/ both=两个都算
+    mouseVoiceBlock: true,    // 拦截侧键原功能（浏览器前进/后退等）专键专用；
+                             // 关掉则语音与原功能并行    micPassMod: 'none',      // 语音键透传附加修饰键（none/ctrl/alt/shift；Windows 微信输入法
                              // 「按住说话」强制要求组合键，纯 F10 配不进去 → 选 ctrl 后在
                              // 微信里配 Ctrl+F10。仅 win32 生效，mac 无此限制）
     remoteSafeMode: false,   // 远控防串键（仅 win32，需配合 micPassMod）：语音键透传主键改发

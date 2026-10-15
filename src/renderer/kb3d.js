@@ -1,6 +1,6 @@
 // 3D 键盘首屏（Three.js）：87 键程序化建模 + 键缝 RGB 透光 + 拖拽旋转 + 点击拾取
-// 性能守门：几何体按键宽共享（7 种）；常驻动画只有悬浮微动；容器滚出视野/页面
-// 隐藏/托盘暂停（setRenderPaused）时停渲染循环；悬停拾取只在 pointermove 时做。
+// 性能守门：几何体按键宽共享（7 种）；常驻动画只有悬浮微动；窗口失焦/容器滚出
+// 视野/页面隐藏/托盘暂停（setRenderPaused）时停渲染循环；悬停拾取只在 pointermove 时做。
 import * as THREE from '../../vendor/three/three.module.min.js';
 import { animate, stagger } from '../../vendor/animejs/anime.esm.min.js';
 
@@ -289,7 +289,12 @@ export function createKeyboard3D(container, { onKeyClick, intro = false } = {}) 
     }
   }
 
-  // ---------- 渲染循环：视野外/页面隐藏/托盘暂停即停 ----------
+  // ---------- 渲染循环：失焦/视野外/页面隐藏/托盘暂停即停 ----------
+  // 失焦 0 帧：设置页没焦点时 3D 键盘根本没人看，整循环停掉。失焦判定由主进程
+  // OS 级 isFocused() 经 app-visibility → setRenderPaused 驱动（渲染端 DOM
+  // blur/focus 在全屏游戏抢占前台时不可靠——实测 document.hasFocus() 恒 true）。
+  // 只停渲染循环：同页的麦克风桥接 AudioWorklet 不受影响（语音输入时焦点本来
+  // 就在别的窗口上）。
   let visible = true, raf = 0, t0 = performance.now();
   const io = new IntersectionObserver(entries => {
     visible = entries[0].isIntersecting;
@@ -300,7 +305,11 @@ export function createKeyboard3D(container, { onKeyClick, intro = false } = {}) 
   liveLoops.add(tick); // setRenderPaused 恢复时逐实例拉起（页面存续期内不清理，实例至多 2 个）
 
   function tick() {
-    raf = 0;
+    // 取消优先：重复拉起一律幂等收敛成一条链。曾经 raf=0 直接排新帧，
+    // 未取消旧链——setRenderPaused 恢复 / visibilitychange 等入口每触发一次
+    // 就多叠一条 RAF 链，每条都在渲染（实测 N 条链 = N 倍 GPU/渲染进程占用，
+    // 是「没在用也占 CPU」的隐性放大器）
+    if (raf) { cancelAnimationFrame(raf); raf = 0; }
     if (!visible || document.hidden || renderPaused) return;
     const t = (performance.now() - t0) / 1000;
     // 悬浮微动 + 未拖拽时缓慢摇摆

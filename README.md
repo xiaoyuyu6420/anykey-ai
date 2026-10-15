@@ -70,7 +70,7 @@
 
 1. 启动后托盘常驻，按键盘 **「AI 切换」键**进入 AI 模式（F 行白灯亮）
 2. 在设置界面对每个键配动作，**按键即触发**，界面里按键会高亮对应行
-3. 「键盘麦克风 → 虚拟麦克风」：装虚拟声卡（Win: [VB-Cable](https://vb-audio.com/Cable/) / Mac: [BlackHole 2ch](https://existential.audio/blackhole/)）→ 勾「启用桥接」→ 按住开麦键（默认 F10）说话，任何软件都能用
+3. 「键盘麦克风 → 虚拟麦克风」：装虚拟声卡（Win: [VB-Cable](https://vb-audio.com/Cable/) / Mac: [BlackHole 2ch](https://existential.audio/blackhole/)）→ 勾「启用桥接」→ 按住开麦键（默认 F10）说话，任何软件都能用；支持**长按锁定**（按住说话键超过阈值再松开 = 保持开麦，再按一下结束，长段口述不用一直按着）和**鼠标侧键按住说话**（Win：按住鼠标侧键 = 按住说话键）
 
 > 💡 **语音输入建议用蓝牙连接**——实测蓝牙链路的声音质量明显好于 2.4G 接收器，详见下方 FAQ。
 

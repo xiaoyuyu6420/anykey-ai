@@ -574,6 +574,10 @@ function buildRow(key, binding) {
   const renderFields = () => {
     fields.innerHTML = '';
     const t = typeSel.value;
+    // 富字段类型（启动程序/网址/宏）走两行布局：第一行键名+类型+操作，
+    // 字段区整行铺满第二行——单行硬塞的下场见 v0.17.x F4 行（字段竖排、
+    // 提示文字一列一个字）。只有 none/sys 是纯提示，保持单行紧凑。
+    row.classList.toggle('rich', ['app', 'url', 'macro', 'hotkey'].includes(t));
     if (t === 'none') {
       const span = document.createElement('span');
       span.className = 'none-hint';
@@ -918,6 +922,24 @@ async function initMicBridge() {
     triggerBox.appendChild(label);
   }
 
+  // 长按锁定：按住说话键 ≥ 阈值后松开保持开麦，再按一下任意说话键结束
+  const latchSel = document.getElementById('mic-latch');
+  latchSel.value = String(Number(state.settings.micLatchMs) || 0);
+  latchSel.onchange = async () => {
+    const ms = Number(latchSel.value) || 0;
+    state.settings.micLatchMs = ms;
+    await window.aikey.setSettings({ micLatchMs: ms });
+  };
+
+  // 锁定静音自动结束（看门狗阈值，0=不自动结束）
+  const latchSilSel = document.getElementById('mic-latch-silence');
+  latchSilSel.value = String(Number(state.settings.micLatchSilenceSec) || 0);
+  latchSilSel.onchange = async () => {
+    const sec = Number(latchSilSel.value) || 0;
+    state.settings.micLatchSilenceSec = sec;
+    await window.aikey.setSettings({ micLatchSilenceSec: sec });
+  };
+
   // 透传修饰键（仅 Windows：微信输入法「按住说话」强制组合键）
   if (navigator.userAgent.includes('Windows')) {
     const modRow = document.getElementById('mic-pass-mod-row');
@@ -959,6 +981,31 @@ async function initMicBridge() {
       updateRsHint();
     };
     modSel.addEventListener('change', updateRsHint);
+  }
+
+  // 鼠标侧键按住说话（仅 Windows：WH_MOUSE_LL 低级钩子，mac 无此行）
+  if (navigator.userAgent.includes('Windows')) {
+    const mRow = document.getElementById('mic-mouse-row');
+    const mCb = document.getElementById('opt-mouse-voice');
+    const mBtn = document.getElementById('mouse-voice-btn');
+    const mBlock = document.getElementById('opt-mouse-block');
+    mRow.hidden = false;
+    mCb.checked = !!state.settings.mouseVoiceEnabled;
+    mBtn.value = state.settings.mouseVoiceButton || 'x1';
+    mBlock.checked = state.settings.mouseVoiceBlock !== false;
+    const syncMouse = async () => {
+      state.settings.mouseVoiceEnabled = mCb.checked;
+      state.settings.mouseVoiceButton = mBtn.value;
+      state.settings.mouseVoiceBlock = mBlock.checked;
+      await window.aikey.setSettings({
+        mouseVoiceEnabled: mCb.checked,
+        mouseVoiceButton: mBtn.value,
+        mouseVoiceBlock: mBlock.checked,
+      });
+    };
+    mCb.onchange = syncMouse;
+    mBtn.onchange = syncMouse;
+    mBlock.onchange = syncMouse;
   }
 
   optBridge.checked = !!state.settings.micBridgeEnabled;

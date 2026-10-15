@@ -71,5 +71,19 @@ console.log('[T3] 配置默认值与旧文件兼容');
     '旧文件合并：新字段补默认、旧字段保留');
 }
 
+console.log('[T4] 鼠标侧键 = 语音触发键（合成 keyId，无系统键码）');
+{
+  const S = (over) => ({ remoteSafeMode: true, micPassMod: 'ctrl', micTriggerKeys: ['f10', 'ai_key'], ...over });
+  ok(passKeyNameOf(S(), 'mouse_x1', true) === REMOTE_SAFE_KEY, '侧键远控防串键同样改发 F13');
+  ok(passKeyNameOf(S(), 'mouse_x2', true) === REMOTE_SAFE_KEY, '侧键5 同样');
+  ok(passKeyNameOf(S(), 'mouse_x3', true) === 'mouse_x3', '非 x1/x2 的鼠标键不算触发键');
+  ok(passKeyNameOf(S({ remoteSafeMode: false }), 'mouse_x1', true) === 'mouse_x1', '开关关闭不替换');
+  const actions = require('../src/main/actions.js');
+  const vk = name => actions.vkOf(name);
+  ok(vk('mouse_x1') === null, '前提：鼠标侧键没有系统键码');
+  ok(aliasKeyOf(S(), 'mouse_x1', vk) === 'f10', '侧键借第一个有键码的触发键（F10）→ 微信里配的 Ctrl+F10 照样能用');
+  ok(aliasKeyOf({ micTriggerKeys: ['ai_key'] }, 'mouse_x1', vk) === 'f10', '键盘触发键全没键码时兜底借 F10');
+}
+
 console.log(`\n${fail === 0 ? '全部通过' : '存在失败'}：${pass} 通过 / ${fail} 失败`);
 process.exit(fail === 0 ? 0 : 1);

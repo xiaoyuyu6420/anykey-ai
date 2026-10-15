@@ -279,7 +279,8 @@ p.keys-hint { font-size: 12px; color: var(--muted); line-height: 1.7; margin: 8p
 /* ---------- 键位行（列表模式）：轻玻璃，hover/配置态点光 ---------- */
 .key-row {
   display: grid;
-  grid-template-columns: 200px 120px 1fr auto;
+  grid-template-columns: 200px 130px 1fr auto;
+  grid-template-areas: "name type fields actions";
   gap: 10px; align-items: center;
   background: linear-gradient(170deg, rgba(28, 33, 48, .5), rgba(16, 19, 29, .42));
   border: 1px solid var(--line);
@@ -291,7 +292,7 @@ p.keys-hint { font-size: 12px; color: var(--muted); line-height: 1.7; margin: 8p
   border-color: var(--accent);
   box-shadow: 0 0 0 3px rgba(79, 140, 255, .22), var(--glow);
 }
-.key-name { font-weight: 600; cursor: default; user-select: none; display: flex; align-items: baseline; gap: 7px; }
+.key-name { grid-area: name; font-weight: 600; cursor: default; user-select: none; display: flex; align-items: baseline; gap: 7px; }
 /* 已配置的键：名称前霓虹光点（与 3D 首屏「已配置发光」同一语言） */
 .key-row.configured .key-name::before {
   content: ''; width: 7px; height: 7px; border-radius: 50%; flex: 0 0 auto;
@@ -312,7 +313,22 @@ select:focus, input:focus {
   box-shadow: 0 0 0 3px rgba(79, 140, 255, .15);
 }
 
-.action-fields { display: flex; gap: 8px; align-items: center; min-width: 0; }
+/* 富字段类型（app/url/macro）：字段区掉到第二行整行铺开，
+   第一行只留键名/类型/操作（修复 v0.17.x F4 行：flex 不换行把
+   扩展控件挤成竖排、提示文字被压成一列一个字） */
+.key-row.rich {
+  grid-template-areas:
+    "name type . actions"
+    "fields fields fields fields";
+  row-gap: 4px;
+}
+.key-row.rich .action-fields {
+  border-top: 1px dashed var(--line);
+  padding-top: 10px;
+  margin-top: 2px;
+}
+.action-fields { grid-area: fields; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; min-width: 0; }
+.key-row > select { grid-area: type; }
 .action-fields > * { flex: 1; }
 .action-fields input[type=text] { min-width: 0; width: 100%; flex: 1 1 auto; }
 
@@ -327,7 +343,7 @@ select:focus, input:focus {
   transition: all .18s var(--ease);
 }
 .action-fields button:hover { border-color: rgba(79, 140, 255, .55); box-shadow: var(--glow); }
-.row-actions { display: flex; gap: 6px; }
+.row-actions { grid-area: actions; display: flex; gap: 6px; }
 .row-actions button {
   cursor: pointer; background: transparent; color: var(--muted);
   border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px;
@@ -342,7 +358,7 @@ select:focus, input:focus {
 }
 .row-actions button.primary:hover { filter: brightness(1.15); box-shadow: 0 2px 20px rgba(95, 108, 255, .55); }
 
-label.after-line { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; flex: 1; }
+label.after-line { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; color: var(--muted); font-size: 12px; flex: 1 1 380px; }
 label.after-line input[type=number] { width: 64px; flex: 0 0 auto; }
 label.after-line input[type=text] { flex: 1; }
 label.pass-line { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; flex-basis: 100%; cursor: pointer; }
