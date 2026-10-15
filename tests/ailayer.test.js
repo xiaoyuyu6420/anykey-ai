@@ -59,6 +59,22 @@ console.log('[T2] buildHotkeys：注册表生成');
   ok(aiLayer.buildHotkeys('off').length === 0 && aiLayer.buildHotkeys('nope').length === 0, 'off/未知方案 → 空表（不注册）');
 }
 
+// ---------- buildHotkeys darwin（macOS 适配：显式传参，默认仍 win32） ----------
+console.log('[T2b] buildHotkeys darwin：mac 键码与修饰符');
+{
+  const ca = aiLayer.buildHotkeys('ctrlalt', 'darwin');
+  ok(ca.length === 12, 'ctrlalt 方案 12 个热键');
+  ok(ca[0].code === 122 && ca[1].code === 120 && ca[2].code === 99, 'mac 键码 F1=122/F2=120/F3=99（HIToolbox 非连续）');
+  ok(ca.every(h => (h.mods & 0x40000) !== 0 && (h.mods & 0x80000) !== 0), '全部含 Control|Alternate flags');
+  ok(ca.every(h => h.vk === undefined), 'darwin 形状不带 VK 码字段（code 才是键码）');
+
+  const alt = aiLayer.buildHotkeys('alt', 'darwin');
+  ok(alt.length === 11 && !alt.some(h => h.key === 'f4'), 'alt 方案 11 个（跳过 F4，mac 同语义）');
+  ok(alt.every(h => h.mods === 0x80000), 'alt 方案只含 Option(⌥) flag');
+
+  ok(aiLayer.buildHotkeys('off', 'darwin').length === 0, 'off → 空表（不注册）');
+}
+
 // ---------- CODING_PRESET ----------
 console.log('[T3] CODING_PRESET：预设动作形状合法');
 {

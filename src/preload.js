@@ -6,6 +6,9 @@ contextBridge.exposeInMainWorld('aikey', {
   // module not found: path 导致整个 preload 加载失败、设置页白屏），
   // 故由主进程算好 file:// URL 再通过 IPC 传过来。
   micWorkletUrl: () => ipcRenderer.invoke('mic-worklet-url'),
+  platform: process.platform, // UI 平台化文案（占位符/预设说明；沙箱下 process 可用，仅 require 受限）
+  // 打开外部链接（BlackHole 下载页等）：主进程校验 https 后 shell.openExternal
+  openExternal: url => ipcRenderer.invoke('open-external', url),
   getState: () => ipcRenderer.invoke('get-state'),
   setBinding: (keyId, action, mode) => ipcRenderer.invoke('set-binding', keyId, action, mode),
   setSettings: s => ipcRenderer.invoke('set-settings', s),

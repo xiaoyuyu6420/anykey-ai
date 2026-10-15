@@ -828,6 +828,14 @@ function startMicDiag(on) {
 ipcMain.handle('mic-worklet-url', () =>
   pathToFileURL(path.join(__dirname, '..', 'renderer', 'mic-bridge-worklet.js')).href);
 
+// 外部链接（BlackHole 下载页等）：只放行 http(s)，交给系统默认浏览器
+ipcMain.handle('open-external', (_e, url) => {
+  const u = String(url || '');
+  if (!/^https?:\/\//i.test(u)) return { ok: false, error: '仅支持 http(s) 链接' };
+  shell.openExternal(u);
+  return { ok: true };
+});
+
 // 录音测试：把「实际送进 ASR 的音频」存成 WAV，用来判断问题在音频还是在识别引擎
 // 逻辑：人耳听着清楚 → 识别引擎的锅；人耳都费劲 → 音频的锅。
 // 这是唯一能排除「我一直在优化却没人听」这类假设的办法。
@@ -1259,26 +1267,27 @@ ipcMain.handle('profile-op', (_e, payload) => {
 // AI 层配置：get / set（规范化+落盘+即时生效）/ preset（Coding 预设）/ test（试跑槽位）
 ipcMain.handle('ailayer-op', (_e, payload) => {
   const { op } = payload || {};
-  const supported = process.platform === 'win32';
+  const supported = aiLayer.supported(); // win32: RegisterHotKey / darwin: CGEventTap
   if (op === 'get') {
     return {
       supported,
       running: aiLayer.running(),
       failed: aiLayer.failedKeys(),
+      error: aiLayer.lastErrorText(), // 环境级故障（mac 缺辅助功能授权等），UI 给可操作提示
       config: cfg.aiLayer,
       triggers: aiLayer.triggerOptions(),
       slotKeys: aiLayer.SLOT_KEYS,
     };
   }
   if (op === 'set') {
-    if (!supported) return { ok: false, error: 'AI 层仅支持 Windows' };
+    if (!supported) return { ok: false, error: 'AI 层仅支持 Windows / macOS' };
     cfg.aiLayer = aiLayer.normalizeAiLayer(payload && payload.config);
     config.save(cfg);
     syncAilayer();
-    return { ok: true, running: aiLayer.running(), failed: aiLayer.failedKeys(), config: cfg.aiLayer };
+    return { ok: true, running: aiLayer.running(), failed: aiLayer.failedKeys(), error: aiLayer.lastErrorText(), config: cfg.aiLayer };
   }
   if (op === 'preset') {
-    if (!supported) return { ok: false, error: 'AI 层仅支持 Windows' };
+    if (!supported) return { ok: false, error: 'AI 层仅支持 Windows / macOS' };
     cfg.aiLayer.slots = JSON.parse(JSON.stringify(aiLayer.CODING_PRESET));
     config.save(cfg);
     syncAilayer();

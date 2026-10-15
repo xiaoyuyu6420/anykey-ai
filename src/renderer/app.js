@@ -365,7 +365,7 @@ function initAppRules() {
   const box = document.getElementById('app-rules');
   const addBtn = document.getElementById('rule-add');
   if (state.profiles && state.profiles.fgSupported === false) {
-    document.getElementById('fg-platform-hint').textContent = '（自动检测仅 Windows，此处规则在 mac 上不生效）';
+    document.getElementById('fg-platform-hint').textContent = '（当前平台不支持前台应用自动检测，规则不会生效）';
   }
 
   const save = async () => {
@@ -803,9 +803,11 @@ function ensureCaptureHandler() {
     if (e.ctrlKey) mods.push('Ctrl');
     if (e.altKey) mods.push('Alt');
     if (e.shiftKey) mods.push('Shift');
-    // Win 键在部分 Windows 构建上第二键时 metaKey 为 false，用 getModifierState 兜底
+    // Win/Cmd 键在部分构建上第二键时 metaKey 为 false，用 getModifierState 兜底。
+    // mac 上 Meta 键就是 Cmd：按 Cmd 命名（sendHotkey 两侧都认），显示语义才对
+    const META_NAME = window.aikey.platform === 'darwin' ? 'Cmd' : 'Win';
     if (e.metaKey || e.getModifierState?.('Meta') || e.key === 'Meta' ||
-        e.code === 'MetaLeft' || e.code === 'MetaRight') mods.push('Win');
+        e.code === 'MetaLeft' || e.code === 'MetaRight') mods.push(META_NAME);
     btn._captureInput.value = mods.length ? mods.join('+') + '+' + name : name;
     stopCapture(btn);
   }, true);
@@ -1052,6 +1054,9 @@ async function initMicBridge() {
       opt.textContent = label + (/[ck][ai]?ble/i.test(label) ? '   ← 虚拟声卡' : '');
       selSink.appendChild(opt);
     }
+    // 虚拟声卡在位情况 → BlackHole/VB-CABLE 引导条（syncBhHint 内部按平台过滤）
+    virtualSinkFound = outs.some(d => /cable|blackhole|virtual|loopback/i.test(d.label || ''));
+    syncBhHint();
     // 默认选中：保存过的 / 自动探测虚拟声卡（Windows VB-CABLE / macOS BlackHole）/ 默认设备
     const saved = state.settings.micSinkId;
     if (saved && outs.some(d => d.deviceId === saved)) {
@@ -1065,6 +1070,27 @@ async function initMicBridge() {
     bridge.sinkId = selSink.value;
     await applyBridge();
   }
+
+  // 虚拟声卡缺失引导（mac）：检测不到 BlackHole 时给出可操作的安装路径——
+  // 复制 brew 命令 / 打开下载页 / 装完一键重检。安装需要管理员密码，交给用户在
+  // 熟悉的系统安装器/终端里完成，应用绝不静默装驱动类组件
+  let virtualSinkFound = null;
+  function syncBhHint() {
+    const bar = document.getElementById('bh-hint');
+    if (!bar) return;
+    bar.hidden = !(window.aikey.platform === 'darwin' && virtualSinkFound === false);
+  }
+  const bhCopy = document.getElementById('bh-copy');
+  if (bhCopy) bhCopy.onclick = async () => {
+    try {
+      await navigator.clipboard.writeText('brew install blackhole-2ch');
+      toast('已复制：brew install blackhole-2ch（终端里执行，装完点「重新检测」）');
+    } catch (_) { toast('复制失败，请手动输入：brew install blackhole-2ch', true); }
+  };
+  const bhOpen = document.getElementById('bh-open');
+  if (bhOpen) bhOpen.onclick = () => window.aikey.openExternal('https://existential.audio/blackhole/');
+  const bhRescan = document.getElementById('bh-rescan');
+  if (bhRescan) bhRescan.onclick = () => refreshSinks();
 
   function stopBridge() {
     if (bridge.node) {
@@ -1390,7 +1416,7 @@ async function initAiLayer() {
     document.body.classList.remove('booting');
     return;
   }
-  // 仅 Windows：不支持的平台整页隐藏，别留一个空标签让人以为坏了
+  // 未适配平台（非 Windows/macOS）整页隐藏，别留一个空标签让人以为坏了
   if (!st.supported) {
     card.hidden = true;
     if (tab) tab.hidden = true;
@@ -1407,20 +1433,36 @@ async function initAiLayer() {
   console.log('[ailayer-ui] 任意键盘扩展卡片已显示，触发键', st.config && st.config.trigger);
   aiLayerConfig = st.config || { enabled: false, trigger: 'ctrlalt', slots: {} };
   const slotKeys = st.slotKeys || [];
+  let aiLayerError = st.error || '';
 
   const optEn = document.getElementById('opt-ailayer');
   const selTrigger = document.getElementById('ailayer-trigger');
   const status = document.getElementById('ailayer-status');
   const slotsEl = document.getElementById('ailayer-slots');
 
+  // 触发键选项文案按平台本地化（主进程 TRIGGERS 已带平台 label：mac 显示 ⌥ Option）
+  const IS_MAC_TRIG = window.aikey.platform === 'darwin';
+  for (const t of st.triggers || []) {
+    const opt = selTrigger.querySelector(`option[value="${t.value}"]`);
+    if (opt && t.label) opt.textContent = `${t.label}（${t.value === 'ctrlalt' ? '推荐，不干扰常用快捷键' : IS_MAC_TRIG ? '进阶，自动跳过 F4' : '进阶，自动跳过 F4 保留 Alt+F4'}）`;
+  }
+
   const syncStatus = () => {
-    status.textContent = aiLayerConfig.enabled ? '监听中' : '未启用';
-    status.classList.toggle('on', !!aiLayerConfig.enabled);
+    if (aiLayerConfig.enabled && aiLayerError) {
+      // 环境级故障（mac 缺辅助功能授权等）：醒目提示，悬停看完整指引
+      status.textContent = '需授权';
+      status.title = aiLayerError;
+      status.classList.add('on');
+    } else {
+      status.textContent = aiLayerConfig.enabled ? '监听中' : '未启用';
+      status.title = '';
+      status.classList.toggle('on', !!aiLayerConfig.enabled);
+    }
   };
 
   const save = async patch => {
     const r = await window.aikey.aiLayerOp({ op: 'set', config: { ...aiLayerConfig, ...patch } });
-    if (r && r.ok) { aiLayerConfig = r.config; syncStatus(); }
+    if (r && r.ok) { aiLayerConfig = r.config; aiLayerError = r.error || ''; syncStatus(); }
     else toast((r && r.error) || '保存失败', true);
   };
 
@@ -1433,11 +1475,15 @@ async function initAiLayer() {
       aiLayerConfig = r.config;
       syncStatus();
       renderSlots();
-      toast('已填入 Coding 预设：F1 Claude · F2 ChatGPT · F3 Gemini · F4 语音输入 · F5 截图 · F6 记事本');
+      // 预设内容按平台不同（Win: 语音输入/记事本；mac: 备忘录/聚焦），不写死细节
+      toast('已填入 Coding 预设：F1~F3 三个 AI 网页 + 常用工具，可继续修改每个槽位');
     }
   };
 
-  const PLACEHOLDER = { app: 'C:/path/程序.exe', url: 'https://…', hotkey: 'Ctrl+Shift+S' };
+  const IS_MAC_UI = window.aikey.platform === 'darwin';
+  const PLACEHOLDER = IS_MAC_UI
+    ? { app: '/Applications/xxx.app', url: 'https://…', hotkey: 'Cmd+Shift+S' }
+    : { app: 'C:/path/程序.exe', url: 'https://…', hotkey: 'Ctrl+Shift+S' };
   const SLOT_TYPES = [['none', '不动作'], ['app', '启动程序'], ['url', '打开网址'], ['hotkey', '快捷键']];
   function renderSlots() {
     slotsEl.innerHTML = '';
@@ -1484,7 +1530,7 @@ async function initAiLayer() {
           afterEl = document.createElement('div');
           afterEl.className = 'ailayer-after';
           afterEl.innerHTML = `<span>AI 直达：启动后</span><input type="number" min="0" step="100"/>` +
-            `<span>ms 发</span><input type="text" placeholder="快捷键，如 Ctrl+L（留空关闭）"/>`;
+            `<span>ms 发</span><input type="text" placeholder="快捷键，如 ${IS_MAC_UI ? 'Cmd+L' : 'Ctrl+L'}（留空关闭）"/>`;
           cell.appendChild(afterEl);
         } else if (!need && afterEl) {
           afterEl.remove();
@@ -1559,7 +1605,7 @@ const KEY_LABELS = {
   home: 'Home', end: 'End', pgup: 'PgUp', pgdn: 'PgDn', delete: 'Del', insert: 'Ins',
   minus: '-', equal: '=', comma: ',', period: '.', slash: '/', backtick: '`',
   lbracket: '[', rbracket: ']', backslash: '\\', semicolon: ';', quote: "'",
-  ctrl: 'Ctrl', shift: 'Shift', alt: 'Alt', win: 'Win', fn: 'Fn',
+  ctrl: 'Ctrl', shift: 'Shift', alt: 'Alt', option: '⌥ Option', win: 'Win', cmd: 'Cmd', command: 'Cmd', fn: 'Fn',
 };
 function keyLabel(name) {
   if (KEY_LABELS[name]) return KEY_LABELS[name];

@@ -52,15 +52,15 @@
 
 ## 🚀 30 秒上手任意键盘扩展（不需要特定键盘）
 
-1. 打开顶部「**任意键盘 · 通用 → 快捷键层**」页，勾选**启用**
-2. 点「**Coding 预设**」一键填入：F1 Claude · F2 ChatGPT · F3 Gemini · F4 系统语音输入（Win+H）· F5 截图 · F6 记事本
-3. 任意应用里按 **`Ctrl+Alt+F1`**——Claude 打开了。每个格子都能改成启动程序 / 网址 / 快捷键 / AI 直达
+1. 打开顶部「**任意键盘 · 通用 → 快捷键层**」页，勾选**启用**（macOS 首次启用需在「系统设置 → 隐私与安全性 → 辅助功能」授权本应用，未授权时状态会显示「需授权」）
+2. 点「**Coding 预设**」一键填入：F1 Claude · F2 ChatGPT · F3 Gemini + 常用工具（预设按平台自动本地化：Windows F4 语音输入 Win+H / F5 截图 / F6 记事本；macOS F4 备忘录 / F5 截图 / F6 聚焦搜索）
+3. 任意应用里按 **`Ctrl+Alt+F1`**（mac 为 `Control+⌥ Option+F1`）——Claude 打开了。每个格子都能改成启动程序 / 网址 / 快捷键 / AI 直达
 
 设计原则（微软 Copilot 键抢 Right Ctrl 被骂两年的教训）：
 
 - **默认关闭**：不启用就完全不注册热键，F1~F12 保持原样
-- **系统级拦截**：启用后触发键组合被 Windows 拦截，不会串进当前应用
-- **不碰危险键**：进阶 Alt 方案自动跳过 F4（Alt+F4 永远留给系统）
+- **系统级拦截**：启用后触发键组合在系统层被拦截（Windows RegisterHotKey / macOS CGEventTap），不会串进当前应用
+- **不碰危险键**：进阶 Alt(⌥) 方案自动跳过 F4（Alt+F4 永远留给系统）
 
 ## ⌨️ RK R87 Pro AI 完整模式
 
@@ -152,6 +152,12 @@
 </details>
 
 <details>
+<summary><b>macOS 上 AI 层启用后显示「需授权」？</b></summary>
+
+macOS 拦截系统级按键需要辅助功能权限：到「系统设置 → 隐私与安全性 → 辅助功能」把本应用（开发运行为 Electron）打开，然后重新勾选「启用」即可。未授权时 CGEventTap 无法创建，AI 层不会生效（打字统计、RK 键盘映射等其他功能不受影响）。
+</details>
+
+<details>
 <summary><b>杀毒软件报毒 / SmartScreen 拦截？</b></summary>
 
 应用未购买代码签名证书，属于常见误报。全部源码开放，可自行审查或从源码构建；也可在杀软中添加信任。
@@ -198,7 +204,7 @@ pnpm test         # 全量单元测试
 
 目录要点：
 
-- `src/main/ailayer.js` — 任意键盘扩展：系统热键 → 动作槽位（worker 线程消息循环）
+- `src/main/ailayer.js` — 任意键盘扩展：系统热键 → 动作槽位（worker 线程：Win 消息循环 / mac CFRunLoop）
 - `src/main/kb-session.js` — RK 键盘命令会话（蓝牙/2.4G 口心跳/验证/开麦）
 - `src/main/mic.js` — 音频解码管线（vendor mi-sbc + AGC/高通/噪声门）
 - `src/main/stats.js` — 打字统计（系统级键状态轮询 + 本地计数）
@@ -207,13 +213,15 @@ pnpm test         # 全量单元测试
 
 ## 🗺️ 已知限制 / 计划
 
-- [x] 任意键盘扩展（任意键盘 F 键区 → AI 快捷键，Windows）
-- [ ] 任意键盘扩展 macOS 版（CGEvent 热键方案）
-- [x] macOS 兼容：CGEvent 快捷键、mi-hid/mi-sbc darwin prebuilds、构建配置已就绪；首次使用需在「系统设置 → 隐私与安全性 → 辅助功能」授权本应用
+- [x] 任意键盘扩展（任意键盘 F 键区 → AI 快捷键，Windows + macOS）
+- [x] 任意键盘扩展 macOS 版（CGEventTap 事件钩子，系统级拦截；需辅助功能授权）
+- [x] macOS 兼容：CGEvent 快捷键、mi-hid/mi-sbc darwin prebuilds、前台应用自动切档、构建配置已就绪；首次使用需在「系统设置 → 隐私与安全性 → 辅助功能」授权本应用
 - [x] 2.4G 接收器 / 有线 USB 完整支持：三种连接方式功能等价（2026-08 实机标定）
 - [ ] 官方软件的语音打字/翻译云服务是闭源的，本工具只做「麦克风」，识别交给第三方输入法
 - [ ] RK 键盘改键（协议已定位，未实现）
 - [ ] 音质上限受源头 32kbps 编码限制，后处理只能拉响度不能补细节
+- [x] macOS 降噪 DFN3：CI 自动从源码编译 universal2 `libdf.dylib`；本地构建需 Rust（`cargo build --release -p deep_filter --features capi`，双架构后 lipo 合并），缺失时自动回退 RNNoise
+- [ ] mac 无统一听写快捷键（对应 Win+H），预设以备忘录/聚焦代替，语音识别交给输入法
 
 ## ⭐ 支持
 

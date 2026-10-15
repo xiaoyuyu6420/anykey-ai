@@ -1,22 +1,25 @@
 // 前台应用检测（配置档自动切换的事件源）
 // Win：GetForegroundWindow → OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION)
 //      → QueryFullProcessImageNameW，取 exe 基名小写；koffi FFI，无轮询开销之外的依赖
-// mac：降级不支持（CoreFoundation C API 解码链路重，本版本 mac 仅手动切档，UI 有提示）
+// mac：NSWorkspace.sharedWorkspace.frontmostApplication → executableURL 取基名小写
+//      （libobjc objc_msgSend 直调 + koffi FFI；NSWorkspace 在 AppKit，需先 dlopen 注册类）。
+//      返回值与 Win 对齐（进程可执行名小写，如 "chrome"），规则匹配逻辑两侧通用。
 // 规则匹配在 index.js 侧做，本模块只报「前台进程名变化」。
-// 1s 轮询仅微秒级 API 调用；OpenProcess 失败（提权进程等）跳过本轮，保持上一个进程名，
+// 1s 轮询仅微秒级 API 调用；取进程失败（提权/锁屏等）跳过本轮，保持上一个进程名，
 // 避免权限噪音把状态抖来抖去。
 
 class FgWatcher {
   constructor() {
-    this.supported = process.platform === 'win32';
+    this.supported = process.platform === 'win32' || process.platform === 'darwin';
     this.timer = null;
-    this.lastProc = null;   // 当前认知的前台进程名（exe 基名小写）
+    this.lastProc = null;   // 当前认知的前台进程名（可执行名基名小写）
     this.onChange = null;   // (proc, prev)
     if (this.supported) this._init();
   }
 
   _init() {
     try {
+      if (process.platform === 'darwin') return this._initMac();
       const koffi = require('koffi');
       const user32 = koffi.load('user32.dll');
       const kernel32 = koffi.load('kernel32.dll');
@@ -33,10 +36,63 @@ class FgWatcher {
     }
   }
 
+  // [mac] objc 运行时准备：objc_msgSend 按固定签名声明（ABI 上定参与变参调用同形，
+  // koffi 不支持变参）；选择器只在 init 注册一次，轮询路径零字符串开销
+  _initMac() {
+    const koffi = require('koffi');
+    // NSWorkspace 在 AppKit：裸进程未加载，显式 dlopen 保证类已注册（Electron 进程内已加载，无害）
+    try { koffi.load('/System/Library/Frameworks/AppKit.framework/AppKit'); } catch (_) { /* 已加载 */ }
+    // 新系统 /usr/lib/libobjc.A.dylib 不落盘（dyld 共享缓存），dlopen 虚拟路径仍有效
+    const objc = koffi.load('/usr/lib/libobjc.A.dylib');
+    this._getClass = objc.func('void *objc_getClass(const char *)');
+    this._sel = objc.func('void *sel_registerName(const char *)');
+    this._msgSend = objc.func('void *objc_msgSend(void *, void *)');
+    this._msgSendStr = objc.func('const char *objc_msgSend(void *, void *)');
+    this._wsClass = this._getClass('NSWorkspace');
+    this._poolCls = this._getClass('NSAutoreleasePool');
+    if (!this._wsClass || !this._poolCls) throw new Error('AppKit 类未注册');
+    this._selShared = this._sel('sharedWorkspace');
+    this._selFront = this._sel('frontmostApplication');
+    this._selUrl = this._sel('executableURL');
+    this._selPath = this._sel('path');
+    this._selName = this._sel('localizedName');
+    this._selUtf8 = this._sel('UTF8String');
+    this._selAlloc = this._sel('alloc');
+    this._selInit = this._sel('init');
+    this._selDrain = this._sel('drain');
+  }
+
+  // [mac] 取当前前台进程可执行名；失败返回 null（调用方保持原状态）。
+  // 属性读取返回 autoreleased 对象：逐 tick 建/排 autorelease pool，防跨 tick 堆积
+  _currentProcessMac() {
+    const pool = this._msgSend(this._msgSend(this._poolCls, this._selAlloc), this._selInit);
+    try {
+      const ws = this._msgSend(this._wsClass, this._selShared);
+      const app = ws ? this._msgSend(ws, this._selFront) : null; // 锁屏/无前台时为 null
+      if (!app) return null;
+      const url = this._msgSend(app, this._selUrl);
+      const nsPath = url ? this._msgSend(url, this._selPath) : null;
+      if (nsPath) {
+        const p = this._msgSendStr(nsPath, this._selUtf8);
+        if (p) return (String(p).split('/').pop() || '').toLowerCase();
+      }
+      // executableURL 拿不到（沙盒应用等）退回显示名，匹配语义稍宽但可用
+      const nsName = this._msgSend(app, this._selName);
+      if (nsName) {
+        const n = this._msgSendStr(nsName, this._selUtf8);
+        if (n) return String(n).toLowerCase();
+      }
+      return null;
+    } finally {
+      this._msgSend(pool, this._selDrain);
+    }
+  }
+
   // 取当前前台进程名；失败返回 null（调用方保持原状态）
   currentProcess() {
     if (!this.supported) return null;
     try {
+      if (process.platform === 'darwin') return this._currentProcessMac();
       const koffi = require('koffi');
       const hwnd = this._getFg();
       if (!hwnd) return null;
