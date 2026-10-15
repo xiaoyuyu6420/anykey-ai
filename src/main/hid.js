@@ -29,7 +29,9 @@ class KeyboardWatcher extends EventEmitter {
     this.micOn = false;
     this.audioWatchdog = null;
     this.usbSuspended = true; // 默认让 8102 给 KeySession（见文件头注释）
-    this.usbPresent = false;  // 枚举级在线检测（挂起期间也算，供托盘/UI 显示）
+    this.usbPresent = false;  // 8102（有线）枚举级在线（挂起期间也算，供托盘/UI 显示）
+    this.btPresent = false;   // 8243（蓝牙/dongle）枚举级在线——蓝牙重连不经过 8102，
+                              // 少了它「键盘回来了」要等会话握手成功才反映到 UI
     this._pathInfo = new Map(); // path -> 枚举信息（suspendUsb 按 pid 定向关句柄）
     this.vendorPresent = false; // 任一厂商接口（8102+8243）枚举可见（边沿事件源）
     this._vendorInit = false;
@@ -131,14 +133,18 @@ class KeyboardWatcher extends EventEmitter {
     if (present) this.emit('vendor-online');
   }
 
-  // 枚举级在线检测：与句柄解耦——8102 挂起期间托盘/设置页照样能显示「键盘已连接」
+  // 枚举级在线检测：与句柄解耦——8102 挂起期间托盘/设置页照样能显示「键盘已连接」。
+  // 有线（8102）与蓝牙/dongle（8243）任一枚举可见即算在线：蓝牙回来时 8102 根本
+  // 不在枚举里，只看 8102 的话整个重连期间 UI 都停在「未检测到 RK 键盘」，直到
+  // 握手成功才翻身（2026-10-15 用户实测）
   _emitPresence(list) {
-    const present = list.some(d =>
-      d.vendorId === TARGETS[0].vid && d.productId === USB_PID && d.usagePage >= 0xff00);
-    if (present !== this.usbPresent) {
-      this.usbPresent = present;
-      this.emit('device', { connected: present || this.devices.size > 0, name: TARGETS[0].name });
-    }
+    const has = pid => list.some(d =>
+      d.vendorId === TARGETS[0].vid && d.productId === pid && d.usagePage >= 0xff00);
+    const usb = has(USB_PID), bt = has(BT_PID);
+    if (usb === this.usbPresent && bt === this.btPresent) return;
+    this.usbPresent = usb;
+    this.btPresent = bt;
+    this.emit('device', { connected: this.usbPresent || this.btPresent || this.devices.size > 0, name: TARGETS[0].name });
   }
 
   drop(path) {
@@ -146,8 +152,8 @@ class KeyboardWatcher extends EventEmitter {
     if (dev) {
       try { dev.close(); } catch (_) {}
       this.devices.delete(path);
-      // usbPresent 兜底：挂起切换产生的 drop 不应把「键盘在线」误报成离线
-      this.emit('device', { connected: this.devices.size > 0 || this.usbPresent });
+      // 枚举级兜底：挂起切换产生的 drop 不应把「键盘在线」误报成离线
+      this.emit('device', { connected: this.devices.size > 0 || this.usbPresent || this.btPresent });
     }
   }
 

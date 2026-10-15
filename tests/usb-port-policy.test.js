@@ -169,6 +169,27 @@ function handshakeTimeout(s) { s._onDisconnect('handshake-timeout(' + s.transpor
     w.stop();
   }
 
+  console.log('[T7] 蓝牙重连的枚举级在线（8102 不在场）');
+  {
+    FakeHID.instances = [];
+    devices = [usbDev];
+    const w = new KeyboardWatcher();
+    let deviceEvents = [];
+    w.on('device', e => deviceEvents.push(e));
+    w.scan(); // 基线：有线在场
+    devices = [];
+    w.scan();
+    ok(deviceEvents.some(e => e.connected === false), '前置：有线拔出后上报离线');
+    devices = [btDev];
+    w.scan();
+    ok(w.btPresent === true, '蓝牙/dongle 枚举可见被跟踪');
+    ok(deviceEvents[deviceEvents.length - 1].connected === true, '蓝牙回来立即报在线（不等会话握手）');
+    devices = [];
+    w.scan();
+    ok(deviceEvents[deviceEvents.length - 1].connected === false, '蓝牙再走恢复离线');
+    w.stop();
+  }
+
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })().catch(e => { console.error(e); process.exit(1); });
