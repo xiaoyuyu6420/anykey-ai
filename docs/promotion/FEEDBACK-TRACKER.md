@@ -12,6 +12,7 @@
 | 2026-09-02 | 新外部 Issue 0 条、discussions/13 回复 0 条、Star 0 | 仓库已推进到 v0.12.x（改名 AnyKey AI），推广物料需同步改名；投稿仍未收录 |
 | 2026-09-04 | 新外部 Issue 0 条、discussions/13 回复 0 条、Star 0 | 仓库改名 anykey-ai（旧名 301 跳转），推广物料仍用旧名待同步；投稿仍未收录 |
 | 2026-09-20 | discussions/13 首条真实反馈（kaiwen743，2 条），Star 0→2，Fork 1 | 含 1 个 bug（AI/普通模式行为相反、仅 AI 切换键可改键）待复现；1 条市场信号（键盘国内下架、官方疑似停更）印证 AI 层通用化方向 |
+| 2026-10-15 | 发版触达：v0.18.0（macOS 完整适配）+ v0.19.0（鼠标侧键说话/长按锁定）；discussions/13 发版本公告 @ 全部参与者（kaiwen743/zygp/the-eric-kwok），PR#14 单独致谢 | Star 2→3（the-eric-kwok）；mac 适配由社区外传入（本地适配分支），Release 说明补齐 |
 
 ## 渠道看板
 
