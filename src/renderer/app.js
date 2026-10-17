@@ -940,8 +940,8 @@ async function initMicBridge() {
     await window.aikey.setSettings({ micLatchSilenceSec: sec });
   };
 
-  // 透传修饰键（仅 Windows：微信输入法「按住说话」强制组合键）
-  if (navigator.userAgent.includes('Windows')) {
+  // 透传修饰键（win/mac 双平台）：语音键给输入法合成组合键（如 Ctrl+F10）
+  if (navigator.userAgent.includes('Windows') || navigator.platform.includes('Mac')) {
     const modRow = document.getElementById('mic-pass-mod-row');
     const modSel = document.getElementById('mic-pass-mod');
     modRow.hidden = false;
@@ -951,36 +951,39 @@ async function initMicBridge() {
       await window.aikey.setSettings({ micPassMod: modSel.value });
     };
 
-    // 远控防串键：语音键主键改发冷门键 F13，微信里配 Ctrl+F13，
-    // 远程机器上的语音快捷键永远不会被串触
-    const rsRow = document.getElementById('mic-remote-safe-row');
-    const rsCb = document.getElementById('mic-remote-safe');
-    let rsHint = null;
-    const updateRsHint = () => {
-      const on = rsCb.checked;
-      const modOk = ['ctrl', 'alt', 'shift'].includes(modSel.value);
-      const text = on
-        ? `已开启：语音键实际发送 ${modSel.value.toUpperCase()}+F13${modOk ? '' : '（⚠ 上方透传修饰键选了「无」，不生效——请先选 Ctrl）'}。` +
-          '在微信输入法里把「按住说话」配成 Ctrl+F13：打开它的快捷键录制框后按一次语音键即可自动录上。' +
-          '远程机器不会误触自己的语音键；UU远程「设置→键盘→仅控制端响应的快捷键」加一条 F13 可彻底不转发。'
-        : '';
-      if (!text) { if (rsHint) { rsHint.remove(); rsHint = null; } return; }
-      if (!rsHint) {
-        rsHint = document.createElement('p');
-        rsHint.className = 'sub';
-        rsRow.after(rsHint);
-      }
-      rsHint.textContent = text;
-    };
-    rsRow.hidden = false;
-    rsCb.checked = !!state.settings.remoteSafeMode;
-    updateRsHint();
-    rsCb.onchange = async () => {
-      state.settings.remoteSafeMode = rsCb.checked;
-      await window.aikey.setSettings({ remoteSafeMode: rsCb.checked });
+    // 远控防串键（仅 Windows：远控场景 + F13 改发是 win 链路）
+    if (navigator.userAgent.includes('Windows')) {
+      // 远控防串键：语音键主键改发冷门键 F13，微信里配 Ctrl+F13，
+      // 远程机器上的语音快捷键永远不会被串触
+      const rsRow = document.getElementById('mic-remote-safe-row');
+      const rsCb = document.getElementById('mic-remote-safe');
+      let rsHint = null;
+      const updateRsHint = () => {
+        const on = rsCb.checked;
+        const modOk = ['ctrl', 'alt', 'shift'].includes(modSel.value);
+        const text = on
+          ? `已开启：语音键实际发送 ${modSel.value.toUpperCase()}+F13${modOk ? '' : '（⚠ 上方透传修饰键选了「无」，不生效——请先选 Ctrl）'}。` +
+            '在微信输入法里把「按住说话」配成 Ctrl+F13：打开它的快捷键录制框后按一次语音键即可自动录上。' +
+            '远程机器不会误触自己的语音键；UU远程「设置→键盘→仅控制端响应的快捷键」加一条 F13 可彻底不转发。'
+          : '';
+        if (!text) { if (rsHint) { rsHint.remove(); rsHint = null; } return; }
+        if (!rsHint) {
+          rsHint = document.createElement('p');
+          rsHint.className = 'sub';
+          rsRow.after(rsHint);
+        }
+        rsHint.textContent = text;
+      };
+      rsRow.hidden = false;
+      rsCb.checked = !!state.settings.remoteSafeMode;
       updateRsHint();
-    };
-    modSel.addEventListener('change', updateRsHint);
+      rsCb.onchange = async () => {
+        state.settings.remoteSafeMode = rsCb.checked;
+        await window.aikey.setSettings({ remoteSafeMode: rsCb.checked });
+        updateRsHint();
+      };
+      modSel.addEventListener('change', updateRsHint);
+    }
   }
 
   // 鼠标侧键按住说话（win: WH_MOUSE_LL / mac: CGEventTap；Linux 无此行）
