@@ -614,10 +614,13 @@ function currentPassFlags() {
 
 // 语音键透传的合成修饰键（仅 win32）：微信输入法「按住说话」要求快捷键必须含
 // Ctrl/Alt/Shift/Win，纯功能键配不进去。开启后透传序列变为
+// 透传修饰键：按住语音键时给输入法合成组合键——
 // down: Ctrl↓ F10↓ / up: F10↑ Ctrl↑，用户在微信里配 Ctrl+F10 即可。
-// mac 不启用：mac 应用以事件 flags 判修饰，孤立修饰键事件不被普遍认可。
+// win32 必须选（微信「按住说话」要求快捷键含修饰键）；mac 可选（mac 微信输入法
+// 同样能配组合快捷键，行为与 win 对齐）。mac 的组合键合成会额外把修饰键 flags
+// 并到主键事件上（mac 应用普遍按事件 flags 判修饰，见 doPassDown）。
 function micPassModOf(keyId) {
-  if (process.platform !== 'win32') return null;
+  if (process.platform !== 'win32' && process.platform !== 'darwin') return null;
   const m = cfg.settings.micPassMod;
   if (!['ctrl', 'alt', 'shift'].includes(m)) return null;
   return isMicTrigger(cfg.settings, keyId) ? m : null;
@@ -631,7 +634,9 @@ function passKeyName(keyId) {
   const isWin = process.platform === 'win32';
   const safe = passKeyNameOf(cfg.settings, keyId, isWin);
   if (safe !== keyId) return safe;
-  return isWin ? aliasKeyOf(cfg.settings, keyId, actions.vkOf) : keyId;
+  // 借用键逻辑双平台启用：mac 同样有无系统键码的触发键（AI 键/PrtSc/鼠标侧键），
+  // 且 mac 走 CGEvent 注入，合成 Ctrl+F10（借用键+透传修饰键）与 win 等效
+  return aliasKeyOf(cfg.settings, keyId, actions.vkOf);
 }
 
 // 远控探针：F13 down 注入后短窗轮询异步键状态。LL 钩子吞掉的事件不会更新
@@ -683,8 +688,15 @@ function doPassDown(keyId, flags, pass) {
     return;
   }
   if (mod) {
-    const okMod = actions.postRawKey(mod, true, 0);
+    // mac：修饰键 down/up 事件要带自身的 flag（真实硬件行为——Ctrl↓ 事件的 flags
+    // 里含 ctrl）。裸发 flags=0 的修饰键事件，输入法的组合状态机认不出修饰已按下，
+    // 组合快捷键永远不触发（实测：纯 F10 可唤起微信语音，Ctrl+F10/Shift+F10 均无效）
+    const modFlags = process.platform === 'darwin' ? actions.macModFlag(mod) : 0;
+    const okMod = actions.postRawKey(mod, true, modFlags);
     console.log(`[kdbg2] ${keyId} 修饰键 ${mod} down → ${okMod}`);
+    // mac：合成组合的主键事件必须带修饰 flags（mac 应用普遍以事件 flags 判修饰，
+    // 见 actions.macModFlag）；win 的 SendInput 靠系统键态，无需 flags
+    if (process.platform === 'darwin') flags |= modFlags;
   }
   const ok = actions.postRawKey(sent, true, flags);
   console.log(`[kdbg2] ${keyId} 主键 ${sent} down → ${ok}`);
@@ -699,10 +711,15 @@ function doPassDown(keyId, flags, pass) {
 }
 function doPassUp(keyId, flags) {
   const mod = micPassModOf(keyId);
+  const modFlags = (mod && process.platform === 'darwin') ? actions.macModFlag(mod) : 0;
+  if (modFlags) flags |= modFlags; // mac up/down 对称带 flags
   const sent = ptDecision.get(keyId);
+  // 修饰键先于主键抬起（与 down 顺序对称）；up 事件同样带自身 flag（硬件行为）。
+  // 注意必须无条件抬：mac 上无键码触发键（AI 键等）主键注入会失败（sent 停留
+  // false），若把修饰键抬起也 gate 在 sent 上，Ctrl 会卡在按下状态
+  if (mod && ptDecision.has(keyId)) actions.postRawKey(mod, false, modFlags);
   if (sent) {
     actions.postRawKey(sent, false, flags);
-    if (mod) actions.postRawKey(mod, false, 0);
     if (isMicTrigger(cfg.settings, keyId)) {
       console.log(`[passthrough] ${keyId} → ${sent} up`);
     }
@@ -848,8 +865,10 @@ function releasePassthrough() {
   if (latchWatchTimer) { clearInterval(latchWatchTimer); latchWatchTimer = null; }
   clearInterval(probeTimer); probeTimer = null;
   for (const [keyId, sent] of ptDecision) {
+    // 修饰键无条件抬（与 doPassUp 同理：主键注入失败时 sent 为 false，gate 会漏抬卡键）
+    const m = micPassModOf(keyId);
+    if (m) actions.postRawKey(m, false, 0);
     if (sent) actions.postRawKey(sent, false, 0);
-    if (sent) { const m = micPassModOf(keyId); if (m) actions.postRawKey(m, false, 0); }
   }
   ptDecision.clear();
 }
