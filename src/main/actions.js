@@ -118,6 +118,13 @@ const VK = IS_MAC ? VK_MAC : VK_WIN;
 // macOS 修饰键 flags（发给主键事件，应用普遍以 flags 为准）
 const MAC_MOD_FLAG = { ctrl: kCGEventFlagMask.control, shift: kCGEventFlagMask.shift, alt: kCGEventFlagMask.alternate, option: kCGEventFlagMask.alternate, win: kCGEventFlagMask.command, cmd: kCGEventFlagMask.command, command: kCGEventFlagMask.command, fn: kCGEventFlagMask.secondaryFn };
 
+// mac 合成组合键用：修饰键名 → CGEventFlags（sendHotkey 内部同款映射，透传
+// 合成 Ctrl+F10 等组合时需把修饰 flags 并到主键事件上——mac 应用普遍以
+// 事件 flags 判修饰，孤立修饰键按下不构成组合）
+function macModFlag(name) {
+  return MAC_MOD_FLAG[String(name || '').trim().toLowerCase()] || 0;
+}
+
 function vkOf(name) {
   const n = name.trim().toLowerCase();
   return VK[n] !== undefined ? VK[n] : null;
@@ -261,4 +268,4 @@ function scheduleAfter(action) {
 }
 
 // VK_KEYNAMES：按平台选好的「键名→键码」表（打字统计用它构建反向轮询表）
-module.exports = { run, sendHotkey, postRawKey, asyncKeyDown, vkOf, setSysHandler, setMacroRunner, VK_KEYNAMES: VK };
+module.exports = { run, sendHotkey, postRawKey, asyncKeyDown, vkOf, macModFlag, setSysHandler, setMacroRunner, VK_KEYNAMES: VK };

@@ -140,10 +140,10 @@
     <p class="sub">按住即开麦，松开即关麦。这 14 个键只在 AI 模式（F 行白灯亮）下才被本应用看到，F10 / F11 例外——它们在普通模式下也是语音键。AI 键 / PrtSc 自身没有系统键码、转发不出去，按下时会改发「第一个普通说话键」的组合（如 Ctrl+F10）：微信输入法照那个组合配，AI 键就同样能用。</p>
     <div class="mic-row" id="mic-pass-mod-row" hidden>
       <span class="mic-label">透传修饰键</span>
-      <select id="mic-pass-mod" title="Windows 微信输入法「按住说话」要求快捷键必须含 Ctrl/Alt/Shift，纯 F10 配不进去。选 Ctrl 后在微信里配 Ctrl+F10（透传会合成组合键）。mac 不需要。">
+      <select id="mic-pass-mod" title="按住语音键时，自动为输入法合成带修饰键的组合：选 Ctrl 后按 F10 发的就是 Ctrl+F10，在输入法里把「按住说话」配成 Ctrl+F10 即可。Windows 微信输入法强制要求组合键；mac 可选，配组合更稳。">
         <option value="none">无（单键透传）</option>
         <option value="ctrl">Ctrl</option>
-        <option value="alt">Alt</option>
+        <option value="alt">Alt/⌥ Option</option>
         <option value="shift">Shift</option>
       </select>
     </div>
