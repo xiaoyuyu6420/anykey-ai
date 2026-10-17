@@ -12,6 +12,7 @@
 // null，上报 hook-failed（与 win 的钩子安装失败同型，主进程/日志处理复用）。
 
 const { parentPort, workerData } = require('worker_threads');
+const { signalExit, stopRequested } = require('./mac-worker-exit');
 
 let koffi;
 try {
@@ -43,7 +44,7 @@ const CFStringCreateWithCString = CF.func('uintptr_t CFStringCreateWithCString(v
 const CFRunLoopGetCurrent = CF.func('uintptr_t CFRunLoopGetCurrent()');
 const CFRunLoopAddSource = CF.func('void CFRunLoopAddSource(uintptr_t, uintptr_t, uintptr_t)');
 const CFRunLoopRemoveSource = CF.func('void CFRunLoopRemoveSource(uintptr_t, uintptr_t, uintptr_t)');
-const CFRunLoopRun = CF.func('void CFRunLoopRun()');
+const CFRunLoopRunInMode = CF.func('int32_t CFRunLoopRunInMode(uintptr_t, double, bool)');
 
 const buttons = Array.isArray(workerData && workerData.buttons) && workerData.buttons.length
   ? workerData.buttons : ['x1'];
@@ -57,7 +58,6 @@ const mask = (1n << 25n) | (1n << 26n);
 
 // 回调跑在 runloop 线程（本线程），必须快：查表 + postMessage 即返回
 const tapCb = koffi.register((proxy, type, event, info) => {
-  if (process.env.MOUSE_DBG) console.log(`[mdbg] type=${type} ev=${!!event}`);
   if (type === kCGEventTapDisabledByTimeout || type === kCGEventTapDisabledByUserInput) {
     if (tap) CGEventTapEnable(tap, true); // 过慢被系统禁用：重新启用
     return event;
@@ -89,8 +89,11 @@ const runloop = CFRunLoopGetCurrent();
 CFRunLoopAddSource(runloop, src, mode);
 CGEventTapEnable(tap, true); // 双保险：Default tap 创建即启用，系统禁用后也可由此恢复
 
-// runloop 地址给主线程：stop() 跨线程 CFRunLoopStop。
-// 进入 runloop 前等主进程显式放行（run/stop 二选一），竞态处理同 ailayer-worker-mac.js
+// 分片跑 runloop：CFRunLoopRunInMode 每拍最多 50ms 必回 JS 检查停止标志。
+// 不用阻塞版 CFRunLoopRun——跨线程 CFRunLoopStop 对空转中的 runloop 实测无效
+// （栈采样证实），分片循环让停止变成纯 JS 层判断，事件到达仍即时处理
+//（tap 源唤醒当拍即处理，「上界 50ms」只对无事件空转存在）。
+// 进入分片循环前等主进程显式放行（run/stop 二选一），竞态处理同 ailayer-worker-mac.js
 function cleanup() {
   try {
     CFRunLoopRemoveSource(runloop, src, mode);
@@ -101,20 +104,25 @@ function cleanup() {
   koffi.unregister(tapCb);
 }
 let goOrStop = null;
-let entered = false;
 parentPort.on('message', m => {
   if (m !== 'run' && m !== 'stop') return;
   goOrStop = m;
-  if (m === 'stop' && entered) CFRunLoopStop(runloop); // 已在 runloop 中：跨线程停止
 });
 parentPort.postMessage({ type: 'ready', runloop, failed: [] });
 const waitGo = () => {
   if (!goOrStop) return setTimeout(waitGo, 10); // 未放行：留在事件循环里继续等
   if (goOrStop === 'run') {
-    entered = true;
-    CFRunLoopRun(); // 阻塞直到主线程 CFRunLoopStop
+    while (goOrStop !== 'stop') {
+      if (stopRequested(workerData && workerData.stopSab)) break; // 主线程 markStop
+      const r = CFRunLoopRunInMode(mode, 0.05, false);
+      if (r === 1) break; // kCFRunLoopRunStopped：外部 CFRunLoopStop（兼容路径）
+    }
   }
   cleanup();
-  process.exit(0);
+  // 自然退线（不 process.exit）：koffi 清理刚做完，此时强退进程实测会 SIGABRT/
+  // 挂死（2026-10-17 踩坑）。摘掉消息监听 + 关端口后事件循环无待处理句柄，线程
+  // 自然退出，w.on('exit') 照常触发
+  try { parentPort.removeAllListeners('message'); parentPort.close(); } catch (_) {}
+  signalExit(workerData && workerData.stopSab); // 最后一步：通知 stop() 已死透（防主进程退出竞态）
 };
 waitGo();

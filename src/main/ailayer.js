@@ -19,6 +19,7 @@
 
 const { Worker } = require('worker_threads');
 const path = require('path');
+const { createExitSignal } = require('./mac-worker-exit');
 
 const IS_WIN = process.platform === 'win32';
 const IS_MAC = process.platform === 'darwin';
@@ -112,6 +113,7 @@ function triggerOptions() {
 let worker = null;
 let workerTid = 0;          // [win] worker 的 Win32 线程 ID（ready 消息上报，PostThreadMessage 用）
 let workerRunloop = 0n;     // [mac] worker 的 CFRunLoopRef（uintptr_t，CFRunLoopStop 用）
+let workerExit = null;      // [mac] 停止握手（等 worker 死透再放行主进程退出，见 mac-worker-exit.js）
 let hotkeyMap = new Map();  // id -> 'f1'.. 'f12'
 let onTrigger = null;       // (key) => void
 let lastFailed = [];
@@ -162,7 +164,10 @@ function start(trigger, cb) {
   lastError = '';
   permissionBlocked = false;
   const workerFile = IS_MAC ? 'ailayer-worker-mac.js' : 'ailayer-worker.js';
-  const w = new Worker(path.join(__dirname, workerFile), { workerData: { hotkeys } });
+  workerExit = IS_MAC ? createExitSignal() : null;
+  const w = new Worker(path.join(__dirname, workerFile), {
+    workerData: { hotkeys, stopSab: workerExit ? workerExit.sab : undefined },
+  });
   worker = w;
   lastStartAt = Date.now();
   w.on('message', m => {
@@ -231,23 +236,32 @@ function start(trigger, cb) {
 }
 
 // 停止 = 按平台优雅退出（win 投 WM_QUIT / mac 跨线程 CFRunLoopStop，见文件头）；
-// 1 秒后仍不退再 terminate 兜底（对阻塞线程多半无效，但 fire-and-forget 不悬挂）。
+// mac 侧随后有界等待 worker 死透（≤500ms，防主进程在 worker 原生清理窗口内退出 →
+// SIGABRT/挂死，见 mac-worker-exit.js）；超时再 terminate 兜底（不悬挂）。
 function stop() {
   if (worker) {
     const w = worker;
     const tid = workerTid;     // 先取平台句柄，再清状态
     const rl = workerRunloop;
+    const exitSig = workerExit;
     worker = null;
     workerTid = 0;
     workerRunloop = 0n;
+    workerExit = null;
     if (IS_MAC) {
       if (rl) {
+        // 停止双保险：共享标志（worker 的 50ms 自停 timer 读到后自停，跨线程唯一可靠
+        // 路径，见 mac-worker-exit.js）+ CFRunLoopStop（runloop 刚被事件唤醒的窗口内
+        // 立即生效）。随后同步等 worker 死透（通常几 ms）
+        if (exitSig) exitSig.markStop();
         const stopFn = ensureRunLoopStop();
         if (stopFn) {
-          try { stopFn(rl); } catch (_) { /* 优雅路径失败走兜底 */ }
+          try { stopFn(rl); } catch (_) { /* 标志路径已兜底 */ }
         }
+        if (exitSig) exitSig.waitStopped(500);
       } else {
         w._stopRequested = true; // worker 尚未 ready：ready 时改发 'stop'，不进 runloop
+        if (exitSig) exitSig.waitStopped(500); // 该路径无原生帧，但同样等死透再返回
       }
     } else {
       const post = ensurePostQuit();

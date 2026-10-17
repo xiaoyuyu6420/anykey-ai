@@ -6,16 +6,18 @@
 // 前提：系统设置>隐私与安全性>辅助功能 授权宿主应用；未授权 CGEventTapCreate 返回 null，
 // 上报 tap-failed 由主进程给出可操作提示（与「组合键被占用」一样是环境故障，不混入键列表）。
 //
-// 线程模型：tap 回调投递到挂载它的 CFRunLoop，worker 线程跑 CFRunLoopRun() 原生阻塞
-// （期间 JS 事件循环停摆，setTimeout 兜底停不下来——实测踩坑）。退出路径两条：
-//   ① 运行中：主线程跨线程 CFRunLoopStop（合法且有文档保证），runloop 返回后本线程清理；
-//   ② 尚未进入 runloop：CFRunLoopStop 不生效（实测踩坑：stop 先于 run 到达则永久阻塞），
-//     故进入前等主进程显式放行（run/stop 二选一，见文件尾 waitGo）。
+// 线程模型：tap 回调投递到挂载它的 CFRunLoop，worker 线程用 CFRunLoopRunInMode
+// 分片驱动（每拍 ≤50ms 必回 JS）——不用阻塞版 CFRunLoopRun：跨线程 CFRunLoopStop
+// 对空转中的 runloop 实测无效（栈采样证实 worker 仍卡 mach_msg），分片让停止变成
+// 纯 JS 层判断。进入分片循环前等主进程显式放行（run/stop 二选一，见文件尾 waitGo）。
+// 退出后自然退线不 process.exit：koffi 清理刚完成时强退进程会 SIGABRT/挂死
+// （2026-10-17 踩坑），且主线程 stop() 经 SAB 握手等 worker 死透再返回。
 //
 // koffi 指针全部用 uintptr_t 整型承载：koffi 的 opaque 指针对象不能 structured-clone
 // 跨线程传给主线程，整型（BigInt）可以，且 ABI 上与指针同宽同寄存器，无兼容性问题。
 
 const { parentPort, workerData } = require('worker_threads');
+const { signalExit, stopRequested } = require('./mac-worker-exit');
 
 let koffi;
 try {
@@ -53,7 +55,7 @@ const CFStringCreateWithCString = CF.func('uintptr_t CFStringCreateWithCString(v
 const CFRunLoopGetCurrent = CF.func('uintptr_t CFRunLoopGetCurrent()');
 const CFRunLoopAddSource = CF.func('void CFRunLoopAddSource(uintptr_t, uintptr_t, uintptr_t)');
 const CFRunLoopRemoveSource = CF.func('void CFRunLoopRemoveSource(uintptr_t, uintptr_t, uintptr_t)');
-const CFRunLoopRun = CF.func('void CFRunLoopRun()');
+const CFRunLoopRunInMode = CF.func('int32_t CFRunLoopRunInMode(uintptr_t, double, bool)');
 
 const hotkeys = Array.isArray(workerData && workerData.hotkeys) ? workerData.hotkeys : [];
 const byCode = new Map(hotkeys.map(h => [h.code, h]));
@@ -97,10 +99,12 @@ const runloop = CFRunLoopGetCurrent();
 CFRunLoopAddSource(runloop, src, mode);
 CGEventTapEnable(tap, true); // 双保险：Default tap 创建即启用，系统禁用后也可由此恢复
 
-// runloop 地址给主线程：stop() 跨线程 CFRunLoopStop（退出路径见文件头）。
-// 进入 runloop 前等主进程显式放行（run/stop 二选一）：CFRunLoopStop 对「尚未进入
-// runloop」的线程不生效（实测探针踩坑：stop 先于 run 到达则 run 永久阻塞），
-// 快速开关 AI 层时 stop 可能抢在 ready 之后、run 之前——必须由本线程先收到指令再进。
+// 分片跑 runloop：CFRunLoopRunInMode 每拍最多 50ms 必回 JS 检查停止标志。
+// 不用阻塞版 CFRunLoopRun——跨线程 CFRunLoopStop 对空转中的 runloop 实测无效
+// （栈采样证实），分片循环让停止变成纯 JS 层判断，事件到达仍即时处理
+//（tap 源唤醒当拍即处理，「上界 50ms」只对无事件空转存在）。
+// 进入分片循环前等主进程显式放行（run/stop 二选一）：避免 stop 抢在 ready/run
+// 之间到达导致的时序歧义，必须由本线程先收到指令再进。
 function cleanup() {
   try {
     CFRunLoopRemoveSource(runloop, src, mode);
@@ -114,19 +118,22 @@ let goOrStop = null;
 parentPort.on('message', m => {
   if (m !== 'run' && m !== 'stop') return;
   goOrStop = m;
-  if (m === 'stop' && entered) CFRunLoopStop(runloop); // 已在 runloop 中：跨线程停止
 });
 parentPort.postMessage({ type: 'ready', runloop, failed: [] });
-let entered = false;
 const waitGo = () => {
   if (!goOrStop) return setTimeout(waitGo, 10); // 未放行：留在事件循环里继续等
   if (goOrStop === 'run') {
-    entered = true;
-    CFRunLoopRun(); // 阻塞直到主线程 CFRunLoopStop
+    while (goOrStop !== 'stop') {
+      if (stopRequested(workerData && workerData.stopSab)) break; // 主线程 markStop
+      const r = CFRunLoopRunInMode(mode, 0.05, false);
+      if (r === 1) break; // kCFRunLoopRunStopped：外部 CFRunLoopStop（兼容路径）
+    }
   }
   cleanup();
-  // parentPort 有 message 监听时 worker 事件循环不会自然清空（实测：清理完仍不退出），
-  // 监听使命已结束，显式退出
-  process.exit(0);
+  // 自然退线（不 process.exit）：刚从 CFRunLoopRun 原生帧返回、koffi 清理刚做完，
+  // 此时强退进程实测会 SIGABRT/挂死（2026-10-17 踩坑，同 mousehook-worker-mac）。
+  // 摘掉消息监听 + 关端口后事件循环无待处理句柄，线程自然退出，w.on('exit') 照常触发
+  try { parentPort.removeAllListeners('message'); parentPort.close(); } catch (_) {}
+  signalExit(workerData && workerData.stopSab); // 最后一步：通知 stop() 已死透（防主进程退出竞态）
 };
 waitGo();
