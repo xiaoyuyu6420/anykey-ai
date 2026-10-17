@@ -20,6 +20,9 @@ let workerTid = 0;      // [win] worker 的 Win32 线程 ID（PostThreadMessage 
 let workerRunloop = 0n; // [mac] worker 的 CFRunLoopRef（CFRunLoopStop 用）
 let workerExit = null;  // [mac] 停止握手（等 worker 死透再放行主进程退出，见 mac-worker-exit.js）
 let onEvent = null;
+let lastCfg = null;     // 最近一次 start 的入参：tap 被系统销毁时自动重装要用
+let lastCb = null;
+let reinstallTs = [];   // 自动重装时刻（60s 滑窗，防 tap 反复失效造成重装风暴）
 
 const WM_QUIT = 0x0012;
 let postQuit = null;
@@ -52,6 +55,8 @@ function start(cfg, cb) {
   if (!SUPPORTED) return { ok: false, error: '鼠标侧键说话仅支持 Windows / macOS' };
   stop(); // 幂等：先清旧 worker（win=WM_QUIT / mac=CFRunLoopStop，见 ailayer.js 注释）
   onEvent = cb;
+  lastCfg = cfg ? { ...cfg } : cfg;
+  lastCb = cb;
   const buttons = cfg && cfg.button === 'both' ? ['x1', 'x2'] : [cfg && cfg.button === 'x2' ? 'x2' : 'x1'];
   const block = !cfg || cfg.block !== false;
   const workerFile = IS_MAC ? 'mousehook-worker-mac.js' : 'mousehook-worker.js';
@@ -76,6 +81,12 @@ function start(cfg, cb) {
       }
     } else if (m && m.type === 'hook-failed') {
       console.log('[mousehook] 钩子安装失败:', m.error);
+    } else if (m && m.type === 'tap-lost') {
+      // 系统级事件（GPU/WindowServer 异常、会话切换等）会销毁会话级事件 tap 的
+      // source——worker 已按「tap 失效」收尾，这里重装钩子（2026-10-18 02:07 事故：
+      // 无此路径时钩子静默死亡，侧键说话直到重启应用都无响应）
+      console.log('[mousehook] 事件 tap 被系统销毁，自动重装');
+      autoReinstall();
     } else if (m && m.type === 'koffi-failed') {
       console.log('[mousehook] koffi 加载失败，侧键说话不可用:', m.error);
     } else if (m && m.type === 'xbutton') {
@@ -94,11 +105,10 @@ function start(cfg, cb) {
     worker = null;
     workerTid = 0;
     workerRunloop = 0n;
-    if (code !== 0) {
-      // 钩子装不上多是环境问题（mac 缺辅助功能授权/权限或安全软件拦截），不做自动重启
-      // 风暴——在设置里重新勾一次「鼠标侧键说话」即可重装
-      console.log(`[mousehook] worker 退出(code=${code})——重新勾选侧键说话可重装钩子`);
-    }
+    // 退出必须留痕（code 0 也打）：02:07 事故里 worker 静默退出版本无任何痕迹，
+    // 排查只能靠采样线程栈。钩子装不上多是环境问题（mac 缺辅助功能授权或安全软件
+    // 拦截），失败码提示手动重装；正常收尾交给 tap-lost 的自动重装
+    console.log(`[mousehook] worker 退出(code=${code})${code === 0 ? '' : '——重新勾选侧键说话可重装钩子'}`);
   });
   return { ok: true };
 }
@@ -142,6 +152,23 @@ function stop() {
     if (t.unref) t.unref();
   }
   onEvent = null;
+}
+
+// tap 被系统销毁后的自动重装：复用最近一次 start 入参。60s 滑窗最多 3 次——
+// 若系统持续销毁 tap（极端环境），限流防重装风暴，之后留给用户手动重开
+function autoReinstall() {
+  const now = Date.now();
+  reinstallTs = reinstallTs.filter(t => now - t < 60000);
+  if (reinstallTs.length >= 3) {
+    console.log('[mousehook] 60s 内已自动重装 3 次，暂停自动重装（请在设置里重开鼠标侧键说话）');
+    return;
+  }
+  reinstallTs.push(now);
+  const cfg = lastCfg, cb = lastCb;
+  if (!cfg || !cb) return;
+  setTimeout(() => {
+    if (!running()) start(cfg, cb);
+  }, 500);
 }
 
 module.exports = { start, stop, running };

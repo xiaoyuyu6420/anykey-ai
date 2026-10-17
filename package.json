@@ -16,7 +16,7 @@
     "listen": "node tools/listen.js",
     "dist": "electron-builder --win",
     "dist:mac": "electron-builder --mac --x64 --arm64 --publish never",
-    "test": "node tests/kb-session-fixes.test.js && node tests/downdown-heal.test.js && node tests/profiles.test.js && node tests/macro.test.js && node tests/macro-abort.test.js && node tests/kb-session-race.test.js && node tests/denoise-engine.test.js && node tests/remote-safe.test.js && node tests/usb-port-policy.test.js && node tests/ailayer.test.js && node tests/mic-tune.test.js && node tests/quality-panel.test.js && node tests/noise-subtract.test.js && node tests/mic-probe.test.js && node tests/mic-latch.test.js && node tests/speech-watch.test.js && node tests/resample.test.js"
+    "test": "node tests/kb-session-fixes.test.js && node tests/downdown-heal.test.js && node tests/profiles.test.js && node tests/macro.test.js && node tests/macro-abort.test.js && node tests/kb-session-race.test.js && node tests/denoise-engine.test.js && node tests/remote-safe.test.js && node tests/usb-port-policy.test.js && node tests/ailayer.test.js && node tests/mic-tune.test.js && node tests/quality-panel.test.js && node tests/noise-subtract.test.js && node tests/mic-probe.test.js && node tests/mic-latch.test.js && node tests/speech-watch.test.js && node tests/resample.test.js && node tests/cf-runloop.test.js && node tests/mac-worker-exit.test.js"
   },
   "devDependencies": {
     "animejs": "^4.5.0",

@@ -218,6 +218,13 @@ class KeySession extends EventEmitter {
       // exclusive/already open = 系统尚未释放旧句柄（bluetoothd/dext 异步清理需数秒）。
       // 连续撞墙改指数退避（3/6/12/24s 上限），固定 3s 连撞只会拖长瘫痪窗口
       if (/already open|exclusive/i.test(e.message)) this._openFailStreak++;
+      // 失败必须留痕（限流 30s）：连续失败时这里曾是完全静默的——「会话长期断开
+      // 且无人知道卡在哪一步」（2026-10-18 02:07 系统事件后排障时无迹可寻）
+      const now = Date.now();
+      if (now - (this._lastOpenFailLog || 0) > 30000) {
+        this._lastOpenFailLog = now;
+        console.log(`[session] 开口失败（${this.transport || '?'}）: ${e.message}——将按退避节奏静默重试`);
+      }
       this.emit('state', { connected: false, reason: 'open-failed: ' + e.message });
       this._scheduleReconnect();
     }

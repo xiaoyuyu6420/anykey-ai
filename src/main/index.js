@@ -648,6 +648,10 @@ let probeArmedAt = 0;
 let probeLastNotify = 0;
 
 function armRemoteProbe() {
+  // 仅 win32：探针靠 GetAsyncKeyState 观测 F13 是否落地（mac 无此 API，恒 false），
+  // 且「改发 F13」本就是 win 链路。mac 上若不挡，任何合成键 up 都会走
+  // settleRemoteProbe 判定超时 → 弹「键盘流疑似被远控接管」的误报通知
+  if (process.platform !== 'win32') return;
   probeSeenDown = false;
   probeArmedAt = Date.now();
   clearInterval(probeTimer);
@@ -661,6 +665,7 @@ function armRemoteProbe() {
 }
 
 function settleRemoteProbe() {
+  if (process.platform !== 'win32') return; // 同 armRemoteProbe：探针是 win 专属链路
   clearInterval(probeTimer);
   probeTimer = null;
   // 点按（down+up 间隔过短）采样不可信，不判定；正常「按住说话」必然长按

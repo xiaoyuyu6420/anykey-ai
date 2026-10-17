@@ -5,13 +5,16 @@
 // 无效（栈采样证实）；CFRunLoopTimer 自停方案也未按预期触发。
 // 最终方案：worker 用 CFRunLoopRunInMode(mode, 0.05) 分片跑 runloop——每 50ms 必回
 // JS 检查停止标志，事件到达照常即时处理；停止 = JS 层循环退出，无跨线程停止语义。
-// SAB 布局：[0]=停止标志（主线程置 1），[1]=worker 已死透标志（signalExit 置 1，
-// 主线程 Atomics.wait 有界等待，防退出 join 竞态）。
+// SAB 布局（int32 单元）：[0]=停止标志（主线程置 1）；[1]=worker 已死透标志
+// （signalExit 置 1，主线程 Atomics.wait 有界等待，防退出 join 竞态）；
+// [2]=已进入分片 runloop（markEntered 置 1）。
+// 注意 [1] 只能 signalExit 写——若「已进入」也写 [1]，主线程 waitStopped 会在
+// worker 刚进入 runloop 时就误判「已死透」提前放行（退出 join 竞态复活）。
 
 // worker 侧：标记「已进入分片 runloop」
 function markEntered(sab) {
   if (!sab) return;
-  try { const ia = new Int32Array(sab); Atomics.store(ia, 1, 1); Atomics.notify(ia, 1); } catch (_) {}
+  try { const ia = new Int32Array(sab); Atomics.store(ia, 2, 1); Atomics.notify(ia, 2); } catch (_) {}
 }
 
 // worker 侧：最后一步置位并唤醒主线程（其后不得再碰任何原生资源）
@@ -25,9 +28,9 @@ function stopRequested(sab) {
   try { return new Int32Array(sab)[0] === 1; } catch (_) { return false; }
 }
 
-// 主进程侧：创建配对的 SAB；waitStopped(ms) 同步等 worker 置位（返回是否等到）
+// 主进程侧：创建配对的 SAB（4 个 int32 单元）；waitStopped(ms) 同步等 worker 置位
 function createExitSignal() {
-  const sab = new SharedArrayBuffer(8);
+  const sab = new SharedArrayBuffer(16);
   const ia = new Int32Array(sab);
   return {
     sab,

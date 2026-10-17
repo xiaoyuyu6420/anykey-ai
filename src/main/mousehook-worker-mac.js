@@ -13,6 +13,7 @@
 
 const { parentPort, workerData } = require('worker_threads');
 const { signalExit, stopRequested } = require('./mac-worker-exit');
+const { runloopVerdict } = require('./cf-runloop');
 
 let koffi;
 try {
@@ -112,11 +113,15 @@ parentPort.postMessage({ type: 'ready', runloop, failed: [] });
 const waitGo = () => {
   if (!goOrStop) return setTimeout(waitGo, 10); // 未放行：留在事件循环里继续等
   if (goOrStop === 'run') {
+    let tapLost = false;
     while (goOrStop !== 'stop') {
       if (stopRequested(workerData && workerData.stopSab)) break; // 主线程 markStop
       const r = CFRunLoopRunInMode(mode, 0.05, false);
-      if (r === 1) break; // kCFRunLoopRunStopped：外部 CFRunLoopStop（兼容路径）
+      const verdict = runloopVerdict(r);
+      if (verdict === 'stopped') break;      // 外部 CFRunLoopStop（兼容路径）
+      if (verdict === 'tap-lost') { tapLost = true; break; } // tap 被系统销毁 → 上报重装
     }
+    if (tapLost) parentPort.postMessage({ type: 'tap-lost' });
   }
   cleanup();
   // 自然退线（不 process.exit）：koffi 清理刚做完，此时强退进程实测会 SIGABRT/
