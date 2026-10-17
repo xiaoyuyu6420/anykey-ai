@@ -819,12 +819,13 @@ function latchWatchTick() {
   syncLatchWatch(); // 状态可能已清空 → 停表
 }
 
-// ---------- 鼠标侧键说话（仅 win32：WH_MOUSE_LL 钩子线程，见 mousehook.js）----------
+// ---------- 鼠标侧键说话（win: WH_MOUSE_LL 钩线程 / mac: CGEventTap，见 mousehook.js）----------
 // 侧键 = 又一个「说话键」：合成 keyId mouse_x1/mouse_x2 走与键盘说话键完全相同的
 // micTrigger 链路（开麦/长按锁定/组合键透传全复用），鼠标只是多一个触发源。
 function syncMouseHook() {
   const s = cfg.settings;
-  if (s.mouseVoiceEnabled === true && process.platform === 'win32') {
+  const supported = process.platform === 'win32' || process.platform === 'darwin';
+  if (s.mouseVoiceEnabled === true && supported) {
     const r = mousehook.start(
       { button: s.mouseVoiceButton || 'x1', block: s.mouseVoiceBlock !== false },
       (keyId, phase) => {
@@ -959,6 +960,71 @@ ipcMain.handle('open-external', (_e, url) => {
   if (!/^https?:\/\//i.test(u)) return { ok: false, error: '仅支持 http(s) 链接' };
   shell.openExternal(u);
   return { ok: true };
+});
+
+// 一键安装虚拟声卡（mac）：下载 BlackHole 官方 pkg → osascript 提权安装。
+// 安装走 macOS 原生管理员对话框，用户亲手输密码，本应用全程拿不到密码；
+// 不用 brew（用户未必有），不静默装任何东西（对话框可取消）。
+// 下载源：官方站直链优先（无 API 依赖，国内网络更稳），GitHub latest API 兜底；
+// installer 与 killall coreaudiod 合并进同一条提权 shell——实测 pkg 的 postinstall
+// 不重启 coreaudiod，分开跑要弹两次密码框（本机踩坑）。
+ipcMain.handle('virtual-sink-install', async () => {
+  if (process.platform !== 'darwin') {
+    return { ok: false, error: '一键安装仅支持 macOS（Windows 请用「打开下载页」装 VB-Cable）' };
+  }
+  const tmpPkg = path.join(app.getPath('temp'), 'BlackHole2ch.pkg');
+  try {
+    // 1) 官方直链优先（带版本号的固定路径，2026-10 实测 200）
+    const sources = ['https://existential.audio/downloads/BlackHole2ch-0.6.1.pkg'];
+    // 兜底：GitHub latest release 资产（官方站改版时用；api 不通则跳过）
+    try {
+      const rel = await fetch('https://api.github.com/repos/ExistentialAudio/BlackHole/releases/latest', {
+        headers: { 'User-Agent': 'AnyKey-AI' },
+      }).then(r => (r.ok ? r.json() : null));
+      const asset = (rel && rel.assets || []).find(a => /^BlackHole2ch.*\.pkg$/i.test(a.name || ''));
+      if (asset && asset.size <= 50 * 1024 * 1024) sources.push(asset.browser_download_url);
+    } catch (_) { /* api 不通：直链仍在列表首位 */ }
+    // 2) 依序尝试下载（≤50MB，落盘后校验非空）
+    let downloaded = null, lastErr = '无可用下载源';
+    for (const url of sources) {
+      try {
+        const buf = Buffer.from(await fetch(url, {
+          headers: { 'User-Agent': 'AnyKey-AI' },
+        }).then(r => {
+          if (!r.ok) throw new Error(`HTTP ${r.status}`);
+          return r.arrayBuffer();
+        }));
+        if (buf.length >= 1024) { downloaded = buf; break; }
+        lastErr = '下载内容异常（过小）';
+      } catch (e) { lastErr = e.message; }
+    }
+    if (!downloaded) return { ok: false, error: `下载失败：${lastErr}（可点「打开下载页」手动安装）` };
+    fs.writeFileSync(tmpPkg, downloaded);
+    // 3) osascript 提权：装 pkg + 重启 coreaudiod 一条龙（原生密码框只弹一次；
+    //    取消会 reject）。coreaudiod 被杀后 launchd 自动拉起，驱动即被加载
+    await new Promise((resolve, reject) => {
+      execFile('osascript', ['-e',
+        `do shell script "installer -pkg '${tmpPkg}' -target / && killall coreaudiod || true" with administrator privileges`,
+      ], err => (err ? reject(err) : resolve()));
+    });
+    // 4) 等 coreaudiod 重载 + 设备枚举
+    for (let i = 0; i < 10; i++) {
+      await new Promise(r => setTimeout(r, 800));
+      try {
+        const { stdout } = await new Promise((resolve, reject) =>
+          execFile('system_profiler', ['SPAudioDataType', '-json'], (e, out) => (e ? reject(e) : resolve({ stdout }))));
+        if (stdout.includes('BlackHole')) return { ok: true };
+      } catch (_) { /* 枚举失败继续等 */ }
+    }
+    // 装上了但枚举超时：让用户点「重新检测」兜底
+    return { ok: true, pending: true };
+  } catch (e) {
+    const msg = String(e && (e.message || e));
+    if (/user canceled|取消|error -128/i.test(msg)) return { ok: false, canceled: true, error: '已取消安装' };
+    return { ok: false, error: `安装未完成：${msg}（可点「打开下载页」手动安装）` };
+  } finally {
+    try { fs.unlinkSync(tmpPkg); } catch (_) { /* 不存在则忽略 */ }
+  }
 });
 
 // 录音测试：把「实际送进 ASR 的音频」存成 WAV，用来判断问题在音频还是在识别引擎

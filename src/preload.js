@@ -9,6 +9,8 @@ contextBridge.exposeInMainWorld('aikey', {
   platform: process.platform, // UI 平台化文案（占位符/预设说明；沙箱下 process 可用，仅 require 受限）
   // 打开外部链接（BlackHole 下载页等）：主进程校验 https 后 shell.openExternal
   openExternal: url => ipcRenderer.invoke('open-external', url),
+  // 一键安装虚拟声卡（mac：下载 BlackHole pkg → 系统管理员对话框安装）
+  installVirtualSink: () => ipcRenderer.invoke('virtual-sink-install'),
   getState: () => ipcRenderer.invoke('get-state'),
   setBinding: (keyId, action, mode) => ipcRenderer.invoke('set-binding', keyId, action, mode),
   setSettings: s => ipcRenderer.invoke('set-settings', s),

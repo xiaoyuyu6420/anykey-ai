@@ -983,8 +983,8 @@ async function initMicBridge() {
     modSel.addEventListener('change', updateRsHint);
   }
 
-  // 鼠标侧键按住说话（仅 Windows：WH_MOUSE_LL 低级钩子，mac 无此行）
-  if (navigator.userAgent.includes('Windows')) {
+  // 鼠标侧键按住说话（win: WH_MOUSE_LL / mac: CGEventTap；Linux 无此行）
+  if (navigator.userAgent.includes('Windows') || navigator.platform.includes('Mac')) {
     const mRow = document.getElementById('mic-mouse-row');
     const mCb = document.getElementById('opt-mouse-voice');
     const mBtn = document.getElementById('mouse-voice-btn');
@@ -1138,6 +1138,30 @@ async function initMicBridge() {
   if (bhOpen) bhOpen.onclick = () => window.aikey.openExternal('https://existential.audio/blackhole/');
   const bhRescan = document.getElementById('bh-rescan');
   if (bhRescan) bhRescan.onclick = () => refreshSinks();
+  // 一键安装：下载官方 pkg → 系统弹原生管理员对话框（用户输密码，应用拿不到）→ 装完自动重检
+  const bhInstall = document.getElementById('bh-install');
+  if (bhInstall) bhInstall.onclick = async () => {
+    if (bhInstall.disabled) return;
+    bhInstall.disabled = true;
+    const prev = bhInstall.textContent;
+    bhInstall.textContent = '下载安装中…';
+    try {
+      const r = await window.aikey.installVirtualSink();
+      if (r && r.ok) {
+        toast('BlackHole 安装成功，正在重新检测设备');
+        await refreshSinks();
+      } else if (r && r.canceled) {
+        toast('已取消安装');
+      } else {
+        toast((r && r.error) || '安装未完成', true);
+      }
+    } catch (e) {
+      toast('安装失败：' + (e && e.message), true);
+    } finally {
+      bhInstall.disabled = false;
+      bhInstall.textContent = prev;
+    }
+  };
 
   function stopBridge() {
     if (bridge.node) {
