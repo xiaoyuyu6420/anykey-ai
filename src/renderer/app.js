@@ -59,7 +59,11 @@ function setRkOnline(on) {
     st.textContent = rkOnline ? '已接入' : '未接入';
     st.classList.toggle('on', rkOnline);
   }
-  document.querySelectorAll('.rk-notice').forEach(el => { el.hidden = rkOnline; });
+  document.querySelectorAll('.rk-notice').forEach(el => {
+    // #bh-hint（虚拟声卡引导条）的显隐只归 syncBhHint 管（按虚拟声卡在位情况），
+    // 不能随 RK 接入状态一刀切地显隐——否则没接键盘时它会一直显示
+    if (el.id !== 'bh-hint') el.hidden = rkOnline;
+  });
   for (const fn of rkListeners) {
     try { fn(rkOnline); } catch (e) { console.warn('[ui] rk 状态订阅者出错', e); }
   }
@@ -1093,6 +1097,10 @@ async function initMicBridge() {
     }
   });
 
+  // 虚拟声卡识别：VB-Cable（Win）/ BlackHole（mac）的播放设备名统一判据。
+  // populate 的「← 虚拟声卡」标记、virtualSinkFound 判定、默认选中探测共用它，
+  // 避免多处正则行为不一致（曾因标记命中而判定未命中，引导条与下拉框各说各话）
+  const VIRTUAL_SINK_RE = /cable|blackhole|vb-audio|virtual|loopback/i;
   async function refreshSinks() {
     const devices = await navigator.mediaDevices.enumerateDevices();
     const outs = devices.filter(d => d.kind === 'audiooutput');
@@ -1101,34 +1109,51 @@ async function initMicBridge() {
       const opt = document.createElement('option');
       opt.value = d.deviceId;
       const label = d.label || `设备 ${d.deviceId.slice(0, 8)}`;
-      opt.textContent = label + (/[ck][ai]?ble/i.test(label) ? '   ← 虚拟声卡' : '');
+      opt.textContent = label + (VIRTUAL_SINK_RE.test(label) ? '   ← 虚拟声卡' : '');
       selSink.appendChild(opt);
     }
-    // 虚拟声卡在位情况 → BlackHole/VB-CABLE 引导条（syncBhHint 内部按平台过滤）
-    virtualSinkFound = outs.some(d => /cable|blackhole|virtual|loopback/i.test(d.label || ''));
+    // 虚拟声卡在位情况 → 引导条（syncBhHint 按平台显示对应虚拟声卡的安装引导）。
+    // 与上面的 populate 标记同源：同一个 outs、同一个正则，不会出现「下拉有标记但判定没找到」
+    virtualSinkFound = outs.some(d => VIRTUAL_SINK_RE.test(d.label || ''));
     syncBhHint();
     // 默认选中：保存过的 / 自动探测虚拟声卡（Windows VB-CABLE / macOS BlackHole）/ 默认设备
     const saved = state.settings.micSinkId;
     if (saved && outs.some(d => d.deviceId === saved)) {
       selSink.value = saved;
     } else {
-      const cable = outs.find(d => /cable|blackhole|virtual|loopback/i.test(d.label || ''));
+      const cable = outs.find(d => VIRTUAL_SINK_RE.test(d.label || ''));
       if (cable) selSink.value = cable.deviceId;
       // 探测不到虚拟声卡时保持默认设备，但提示用户（否则语音进音箱、输入侧无声）
-      else toast('未找到虚拟声卡（BlackHole/VB-CABLE），请手动选择播放设备', true);
+      else toast(`未找到虚拟声卡（${BH_IS_MAC ? 'BlackHole' : 'VB-Cable'}），请手动选择播放设备`, true);
     }
     bridge.sinkId = selSink.value;
     await applyBridge();
   }
 
-  // 虚拟声卡缺失引导（mac）：检测不到 BlackHole 时给出可操作的安装路径——
-  // 复制 brew 命令 / 打开下载页 / 装完一键重检。安装需要管理员密码，交给用户在
-  // 熟悉的系统安装器/终端里完成，应用绝不静默装驱动类组件
+  // 虚拟声卡缺失引导：按平台给对应虚拟声卡的安装路径，两平台都引导——
+  //   macOS: BlackHole（复制 brew 命令 / 打开下载页 / 一键安装 pkg）
+  //   Windows: VB-Cable（打开下载页 / 装完重检；官方只有交互式安装包，无静默通道）
+  // HTML 里默认文案是 mac 版，Windows 在初始化时整段替换；安装需要管理员权限的，
+  // 一律交给用户在熟悉的系统安装器/终端里完成，应用绝不静默装驱动类组件
   let virtualSinkFound = null;
+  const BH_IS_MAC = !!(window.aikey && window.aikey.platform === 'darwin');
+  (function initBhHintContent() {
+    if (BH_IS_MAC) return;
+    const text = document.getElementById('bh-hint-text');
+    if (text) {
+      text.innerHTML = '——Windows 桥接需要 VB-Cable 虚拟声卡，把键盘声音「播放」给其他应用（微信输入法等）。到 vb-audio.com/Cable 下载安装，装完点「装好了，重新检测」（建议重启一次应用）。';
+    }
+    // VB-Cable 无静默安装通道：一键安装（mac pkg）与 brew 复制仅 macOS 展示
+    const install = document.getElementById('bh-install');
+    if (install) install.hidden = true;
+    const copy = document.getElementById('bh-copy');
+    if (copy) copy.hidden = true;
+  })();
   function syncBhHint() {
     const bar = document.getElementById('bh-hint');
-    if (!bar) return;
-    bar.hidden = !(window.aikey.platform === 'darwin' && virtualSinkFound === false);
+    if (!bar || !window.aikey) return;
+    // 两个平台都显示引导条：内容已在 initBhHintContent 按平台替换
+    bar.hidden = virtualSinkFound !== false;
   }
   const bhCopy = document.getElementById('bh-copy');
   if (bhCopy) bhCopy.onclick = async () => {
@@ -1138,7 +1163,8 @@ async function initMicBridge() {
     } catch (_) { toast('复制失败，请手动输入：brew install blackhole-2ch', true); }
   };
   const bhOpen = document.getElementById('bh-open');
-  if (bhOpen) bhOpen.onclick = () => window.aikey.openExternal('https://existential.audio/blackhole/');
+  if (bhOpen) bhOpen.onclick = () => window.aikey.openExternal(
+    BH_IS_MAC ? 'https://existential.audio/blackhole/' : 'https://vb-audio.com/Cable/');
   const bhRescan = document.getElementById('bh-rescan');
   if (bhRescan) bhRescan.onclick = () => refreshSinks();
   // 一键安装：下载官方 pkg → 系统弹原生管理员对话框（用户输密码，应用拿不到）→ 装完自动重检
@@ -1225,6 +1251,11 @@ async function initMicBridge() {
   }
 
   await refreshSinks();
+  // 装虚拟声卡 / 插拔音频设备后自动刷新下拉与引导条——用户装完 VB-Cable
+  // 不必记得点「装好了，重新检测」，也不用来回重启应用
+  if (navigator.mediaDevices && typeof navigator.mediaDevices.addEventListener === 'function') {
+    navigator.mediaDevices.addEventListener('devicechange', () => { refreshSinks().catch(() => {}); });
+  }
   initTunePanel();
 }
 
